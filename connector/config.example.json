@@ -1,0 +1,10 @@
+{
+  "siteUrl": "http://localhost:5173",
+  "token": "从教师连接设置生成，粘贴到本机 config.json",
+  "acp": {"command": "pi-acp", "args": [], "enabled": false},
+  "smtp": {"enabled": false,"host": "smtp.example.com","port": 465,"secure": true,"from": "课序 <teacher@example.com>","auth": {"user": "teacher@example.com","pass": "仅保存在本机，不要上传"}},
+  "workRoot": "./work",
+  "executionIsolated": false,
+  "pollIntervalMs": 5000,
+  "taskTimeoutMs": 600000
+}

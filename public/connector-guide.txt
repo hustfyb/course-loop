@@ -1,0 +1,14 @@
+课序 Pi / 邮件连接器
+
+1. 从网站源码的 connector 目录部署连接器，需要 Node.js 22.13 或更新版本。
+2. 在 connector 内执行 npm ci。
+3. 复制 config.example.json 为 config.json。网站教师设置页生成连接凭据，填入 token；siteUrl 填网站地址。
+4. 你独立安装并登录 Pi ACP 适配器，将实际 command 与 args 填入配置。网站使用 ACP v1 stdio，新建独立会话。
+5. 先在隔离环境部署，确保学生程序不能访问网站数据库、其他学生数据或模型凭据。设置 executionIsolated=true 后再启用 acp.enabled。
+6. 需要邮件登录和 Team 邀请时，填写 SMTP 主机、端口、from、auth 并启用 smtp.enabled。网站不会管理你的模型或 SMTP 密码。
+7. 执行 npm start。连接器主动领取任务，不需要暴露 Pi 端口。
+
+网站课程管理员邮箱：hustfyb@gmail.com。
+私有 Sites 预览可能受平台登录保护，连接器需要能访问 API。若平台阻挡机器请求，请先在本地验证，或使用支持机器请求的部署/平台授权方式。不要把教师浏览器会话 Cookie 当作连接器凭据。
+
+未连接时课程草案与组队记录仍可保存，AI 核验停留在队列，不会伪造评分。正式评分不能先修改学生成果再评价。连接器拒绝未预设的权限请求，不会无条件批准操作。

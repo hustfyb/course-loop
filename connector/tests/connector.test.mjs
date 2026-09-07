@@ -1,0 +1,13 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import {fileURLToPath} from 'node:url';
+import {zipSync,strToU8} from 'fflate';
+import {AcpClient} from '../acp.mjs';
+import {extractDocument} from '../documents.mjs';
+const here=path.dirname(fileURLToPath(import.meta.url));
+test('ACP initialization, new session, streamed output and termination',async()=>{const client=new AcpClient(process.execPath,[path.join(here,'fixture-acp.mjs')],{cwd:here,timeout:5000});try{const result=await client.run(here,'fixture');assert.deepEqual(JSON.parse(result),{fixture:true});assert.equal(client.sessionId,'fixture-session')}finally{client.close()}});
+test('ZIP extraction rejects traversal and expands normal project',async()=>{const dir=await fs.mkdtemp(path.join(os.tmpdir(),'course-connector-test-'));try{const good=zipSync({'src/main.py':strToU8('print(1)')});await extractDocument('project.zip',good,dir);assert.equal(await fs.readFile(path.join(dir,'extracted/src/main.py'),'utf8'),'print(1)');const bad=zipSync({'../escape.txt':strToU8('unsafe')});await assert.rejects(()=>extractDocument('bad.zip',bad,dir),/路径/);}finally{await fs.rm(dir,{recursive:true,force:true})}});
+test('DOCX extracts paragraphs as text, not document markup instructions',async()=>{const bytes=zipSync({'[Content_Types].xml':strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),'word/document.xml':strToU8('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>实验评分标准</w:t></w:r></w:p></w:body></w:document>')});const value=await extractDocument('course.docx',bytes,here);assert.match(value,/实验评分标准/)});
