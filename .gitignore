@@ -44,6 +44,8 @@ next-env.d.ts
 /connector/work/
 /test-output/
 
+/data/
+
 !.env.example
 
 **/node_modules/

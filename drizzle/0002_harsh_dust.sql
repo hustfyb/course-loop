@@ -1,0 +1,1 @@
+ALTER TABLE `teams` ADD `repo` text DEFAULT '' NOT NULL;

@@ -27,6 +27,8 @@ import {
   School,
   GraduationCap,
   KeyRound,
+  Trash2,
+  Link2,
 } from 'lucide-react';
 import {
   SidebarProvider,
@@ -115,6 +117,11 @@ const navsByRole: Record<string, readonly (readonly [string, string, Any])[]> =
       ['reports', '提交与评估', ClipboardCheck],
     ],
     guest: [
+      ['courses', '实验内容', BookOpen],
+      ['teams', '我的 Team', Users],
+      ['reports', '提交与评估', ClipboardCheck],
+    ],
+    pending: [
       ['courses', '实验内容', BookOpen],
       ['teams', '我的 Team', Users],
       ['reports', '提交与评估', ClipboardCheck],
@@ -433,34 +440,18 @@ export default function Workbench() {
             </span>
             {!s.user || admin ? (
               s.courses?.length ? (
-                <Select
-                  value={s.selected}
-                  onValueChange={(v) => {
-                    setSelected(String(v));
-                    setAttachments([]);
-                    setDetail(null);
-                  }}
-                >
-                  <SelectTrigger className="course-select">
-                    <SelectValue>
-                      {(v: string) => {
-                        const c = s.courses?.find((x: Any) => x.id === v);
-                        return c ? `${c.title} · ${c.term}` : v;
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {s.courses.map((c: Any) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.title} · {c.term}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <>
+                  <strong>{course?.title || '未选择课程'}</strong>
+                  <span>
+                    {course
+                      ? `${course.term} · 草案 v${course.revision}${course.publishedId ? ' · 已发布' : ''}`
+                      : '在课程工作台选择课程'}
+                  </span>
+                </>
               ) : (
                 <>
-                  <strong>软件工程 3.0</strong>
-                  <span>2026 秋季 · 4 次实验</span>
+                  <strong>还没有课程</strong>
+                  <span>在课程工作台新建</span>
                 </>
               )
             ) : s.classes?.length ? (
@@ -501,6 +492,14 @@ export default function Workbench() {
             </div>
             <small>从规格到可信交付</small>
           </div>
+          {student && (
+            <div className="sidebar-join">
+              <Button className="primary w-full" onClick={() => open('join')}>
+                <Plus size={16} />
+                加入课堂
+              </Button>
+            </div>
+          )}
         </SidebarContent>
         <SidebarFooter>
           <div className="sidebar-person">
@@ -554,7 +553,13 @@ export default function Workbench() {
               }
             >
               <i />
-              {s.health?.online && s.health?.acp ? 'Pi 已连接' : 'Pi 尚未连接'}
+              {s.health?.online && s.health?.acp
+                ? 'Pi 已连接'
+                : s.health?.acpFound === false
+                  ? 'Pi 未连接'
+                  : s.health?.acpError
+                    ? 'Pi 待配置'
+                    : 'Pi 未连接'}
             </span>
             {!s.user && (
               <Button size="sm" variant="outline" onClick={() => open('login')}>
@@ -598,21 +603,20 @@ export default function Workbench() {
                 <p>{heading[2]}</p>
               </div>
               {admin ? (
-                <Button className="primary" onClick={() => open('newCourse')}>
-                  <Plus size={17} />
-                  新建课程
-                </Button>
+                view === 'studio' && (
+                  <Button className="primary" onClick={() => open('newCourse')}>
+                    <Plus size={17} />
+                    新建课程
+                  </Button>
+                )
               ) : teacher ? (
-                <Button className="primary" onClick={() => open('newClass')}>
-                  <Plus size={17} />
-                  开设课堂
-                </Button>
-              ) : s.user ? (
-                <Button onClick={() => open('join')}>
-                  <Plus size={17} />
-                  加入课堂
-                </Button>
-              ) : (
+                view === 'classes' && (
+                  <Button className="primary" onClick={() => open('newClass')}>
+                    <Plus size={17} />
+                    开设课堂
+                  </Button>
+                )
+              ) : s.user ? null : (
                 <Button className="primary" onClick={() => open('login')}>
                   <ArrowUpRight size={17} />
                   进入工作空间
@@ -621,256 +625,331 @@ export default function Workbench() {
             </div>
           </div>
           {view === 'studio' && admin && (
-            <div className="studio-grid">
-              <section className="conversation panel">
-                <div className="panel-title">
-                  <span>
-                    <Sparkles size={18} />
-                    与课程 Agent 协作
-                  </span>
-                  <span className="tag">
-                    {course ? `草案 v${course.revision}` : '草案阶段'}
-                  </span>
-                </div>
-                <div className="conversation-body">
-                  {s.messages?.length ? (
-                    <div className="messages">
-                      {s.messages.map((m: Any) => (
-                        <article className={'message ' + m.role} key={m.id}>
-                          <div className="message-label">
-                            {m.role === 'user' ? '你' : '课程 Agent'}
-                            <small>{fmt(m.created)}</small>
-                          </div>
-                          <p>{m.content}</p>
-                          {JSON.parse(m.fileIds || '[]').map((fid: string) => (
-                            <a
-                              className="file-link"
-                              href={'/api/files/' + fid}
-                              key={fid}
-                            >
-                              <Paperclip size={13} />
-                              {s.files?.find((f: Any) => f.id === fid)?.name ||
-                                '附件'}
-                            </a>
-                          ))}
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="agent-symbol">
-                        <Sparkles size={23} />
+            <>
+              <section className="panel data-panel">
+                <h2>课程管理</h2>
+                <div className="lab-grid">
+                  {s.courses?.map((c: Any) => (
+                    <div
+                      className={
+                        'lab-card panel' +
+                        (s.selected === c.id ? ' chosen' : '')
+                      }
+                      key={c.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (s.selected !== c.id) {
+                          setSelected(c.id);
+                          setAttachments([]);
+                          setDetail(null);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelected(c.id);
+                        }
+                      }}
+                    >
+                      <div className="lab-top">
+                        <span className="tag">{c.term}</span>
+                        <span className="tag">
+                          {c.publishedId ? '已发布' : '草案'}
+                        </span>
                       </div>
-                      <h2>从你已有的材料开始</h2>
+                      <h2>{c.title}</h2>
                       <p>
-                        上传教学大纲、实验指导或评分文档。Agent
-                        会整理任务和评分项，把需要你决定的地方留在这里。
+                        {c.classCount || 0} 个课堂 · 草案 v{c.revision}
                       </p>
-                      <div className="starter-prompts">
+                      <div className="lab-bottom">
+                        <span>
+                          {s.selected === c.id ? '正在编排' : '点击编排内容'}
+                        </span>
                         <button
-                          onClick={() =>
-                            setMessage(
-                              '请检查这四次实验的任务、提交要求和评分标准是否一致。',
-                            )
-                          }
+                          aria-label={'删除 ' + c.title}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            open('delCourse', {
+                              courseId: c.id,
+                              title: c.title,
+                              term: c.term,
+                            });
+                          }}
                         >
-                          <FileText size={17} />
-                          检查四次实验的一致性
-                          <ArrowUpRight size={15} />
-                        </button>
-                        <button
-                          onClick={() =>
-                            setMessage(
-                              '请根据我上传的课程文档生成实验任务和评分草案。',
-                            )
-                          }
-                        >
-                          <Layers3 size={17} />
-                          从文档生成课程草案
-                          <ArrowUpRight size={15} />
+                          <Trash2 size={14} />
+                          删除
                         </button>
                       </div>
-                    </>
-                  )}
-                  {s.jobs
-                    ?.filter((j: Any) => j.status !== 'complete')
-                    .slice(0, 3)
-                    .map((j: Any) => (
-                      <div className="job-note" key={j.id}>
-                        <Status value={j.status} />
-                        <span>{j.error || '课程分析任务'}</span>
-                        {j.status === 'failed' ? (
-                          <button
-                            onClick={() =>
-                              mutation('job-action', {
-                                id: j.id,
-                                action: 'retry',
-                              })
-                            }
-                          >
-                            重试
-                          </button>
-                        ) : ['queued', 'running'].includes(j.status) ? (
-                          <button
-                            onClick={() =>
-                              mutation('job-action', {
-                                id: j.id,
-                                action: 'cancel',
-                              })
-                            }
-                          >
-                            取消
-                          </button>
-                        ) : null}
-                      </div>
-                    ))}
-                  <div className="notice">
-                    <CircleHelp size={16} />
+                    </div>
+                  ))}
+                  <button
+                    className="lab-card panel"
+                    onClick={() => open('newCourse')}
+                  >
+                    <div className="lab-top">
+                      <span className="tag">新课程</span>
+                    </div>
+                    <h2>
+                      <Plus size={17} /> 新建课程
+                    </h2>
+                    <p>预置四次实验，之后用对话编排内容。</p>
+                  </button>
+                </div>
+              </section>
+              <div className="studio-grid">
+                <section className="conversation panel">
+                  <div className="panel-title">
                     <span>
-                      {s.health?.online
-                        ? '有歧义时，Agent 会在这里追问。'
-                        : '连接 Pi 后开始分析。四次实验已预置，可先预览和发布。'}
+                      <Sparkles size={18} />
+                      与课程 Agent 协作
+                    </span>
+                    <span className="tag">
+                      {course ? `草案 v${course.revision}` : '草案阶段'}
                     </span>
                   </div>
-                </div>
-                <div className="composer">
-                  {attachments.length > 0 && (
-                    <div className="attachment-list">
-                      {attachments.map((f) => (
-                        <span key={f.id}>
-                          <FileText size={13} />
-                          {f.name}
+                  <div className="conversation-body">
+                    {s.messages?.length ? (
+                      <div className="messages">
+                        {s.messages.map((m: Any) => (
+                          <article className={'message ' + m.role} key={m.id}>
+                            <div className="message-label">
+                              {m.role === 'user' ? '你' : '课程 Agent'}
+                              <small>{fmt(m.created)}</small>
+                            </div>
+                            <p>{m.content}</p>
+                            {JSON.parse(m.fileIds || '[]').map(
+                              (fid: string) => (
+                                <a
+                                  className="file-link"
+                                  href={'/api/files/' + fid}
+                                  key={fid}
+                                >
+                                  <Paperclip size={13} />
+                                  {s.files?.find((f: Any) => f.id === fid)
+                                    ?.name || '附件'}
+                                </a>
+                              ),
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="agent-symbol">
+                          <Sparkles size={23} />
+                        </div>
+                        <h2>从你已有的材料开始</h2>
+                        <p>
+                          上传教学大纲、实验指导或评分文档。Agent
+                          会整理任务和评分项，把需要你决定的地方留在这里。
+                        </p>
+                        <div className="starter-prompts">
                           <button
-                            aria-label={'移除 ' + f.name}
                             onClick={() =>
-                              setAttachments((a) =>
-                                a.filter((x) => x.id !== f.id),
+                              setMessage(
+                                '请检查这四次实验的任务、提交要求和评分标准是否一致。',
                               )
                             }
                           >
-                            <X size={12} />
+                            <FileText size={17} />
+                            检查四次实验的一致性
+                            <ArrowUpRight size={15} />
                           </button>
-                        </span>
+                          <button
+                            onClick={() =>
+                              setMessage(
+                                '请根据我上传的课程文档生成实验任务和评分草案。',
+                              )
+                            }
+                          >
+                            <Layers3 size={17} />
+                            从文档生成课程草案
+                            <ArrowUpRight size={15} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    {s.jobs
+                      ?.filter((j: Any) => j.status !== 'complete')
+                      .slice(0, 3)
+                      .map((j: Any) => (
+                        <div className="job-note" key={j.id}>
+                          <Status value={j.status} />
+                          <span>{j.error || '课程分析任务'}</span>
+                          {j.status === 'failed' ? (
+                            <button
+                              onClick={() =>
+                                mutation('job-action', {
+                                  id: j.id,
+                                  action: 'retry',
+                                })
+                              }
+                            >
+                              重试
+                            </button>
+                          ) : ['queued', 'running'].includes(j.status) ? (
+                            <button
+                              onClick={() =>
+                                mutation('job-action', {
+                                  id: j.id,
+                                  action: 'cancel',
+                                })
+                              }
+                            >
+                              取消
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    <div className="notice">
+                      <CircleHelp size={16} />
+                      <span>
+                        {s.health?.online
+                          ? '有歧义时，Agent 会在这里追问。'
+                          : '连接 Pi 后开始分析。四次实验已预置，可先预览和发布。'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="composer">
+                    {attachments.length > 0 && (
+                      <div className="attachment-list">
+                        {attachments.map((f) => (
+                          <span key={f.id}>
+                            <FileText size={13} />
+                            {f.name}
+                            <button
+                              aria-label={'移除 ' + f.name}
+                              onClick={() =>
+                                setAttachments((a) =>
+                                  a.filter((x) => x.id !== f.id),
+                                )
+                              }
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      aria-label="给课程 Agent 的消息"
+                      placeholder="描述你的想法，或附上一份文档…"
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                    />
+                    <div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => uploadRef.current?.click()}
+                      >
+                        <Paperclip size={17} />
+                        添加文档
+                      </Button>
+                      <input
+                        hidden
+                        ref={uploadRef}
+                        type="file"
+                        multiple
+                        accept=".md,.txt,.docx,.pdf"
+                        onChange={(e) => {
+                          upload(e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        className="send"
+                        aria-label="发送给 Agent"
+                        disabled={
+                          busy || (!message.trim() && !attachments.length)
+                        }
+                        onClick={sendChat}
+                      >
+                        <ArrowUp size={18} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="composer-hint">
+                    修改先进入草案，确认后才会发布给课堂。
+                  </div>
+                </section>
+                <section className="course-preview">
+                  <div className="preview-heading">
+                    <span className="tiny-label">课程预览</span>
+                    <span className="tag blue">
+                      {draft.experiments.length} 次实验
+                    </span>
+                  </div>
+                  <h2>{draft.title}</h2>
+                  <p className="muted">{draft.description}</p>
+                  <div className="course-facts">
+                    <span>32 学时</span>
+                    <span>8 周</span>
+                    <span>Team 协作</span>
+                  </div>
+                  {draft.questions?.length > 0 && (
+                    <div className="questions">
+                      <strong>需要你确认</strong>
+                      {draft.questions.map((q: string, i: number) => (
+                        <button
+                          key={i}
+                          onClick={() => setMessage(`关于“${q}”，我的决定是：`)}
+                        >
+                          {i + 1}. {q}
+                          <ArrowUpRight size={14} />
+                        </button>
                       ))}
                     </div>
                   )}
-                  <textarea
-                    aria-label="给课程 Agent 的消息"
-                    placeholder="描述你的想法，或附上一份文档…"
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                  />
-                  <div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => uploadRef.current?.click()}
-                    >
-                      <Paperclip size={17} />
-                      添加文档
-                    </Button>
-                    <input
-                      hidden
-                      ref={uploadRef}
-                      type="file"
-                      multiple
-                      accept=".md,.txt,.docx,.pdf"
-                      onChange={(e) => {
-                        upload(e.target.files);
-                        e.target.value = '';
-                      }}
-                    />
-                    <button
-                      className="send"
-                      aria-label="发送给 Agent"
-                      disabled={
-                        busy || (!message.trim() && !attachments.length)
-                      }
-                      onClick={sendChat}
-                    >
-                      <ArrowUp size={18} />
-                    </button>
-                  </div>
-                </div>
-                <div className="composer-hint">
-                  修改先进入草案，确认后才会发布给课堂。
-                </div>
-              </section>
-              <section className="course-preview">
-                <div className="preview-heading">
-                  <span className="tiny-label">课程预览</span>
-                  <span className="tag blue">
-                    {draft.experiments.length} 次实验
-                  </span>
-                </div>
-                <h2>{draft.title}</h2>
-                <p className="muted">{draft.description}</p>
-                <div className="course-facts">
-                  <span>32 学时</span>
-                  <span>8 周</span>
-                  <span>Team 协作</span>
-                </div>
-                {draft.questions?.length > 0 && (
-                  <div className="questions">
-                    <strong>需要你确认</strong>
-                    {draft.questions.map((q: string, i: number) => (
+                  <div className="experiment-list">
+                    {draft.experiments.map((e: Any, i: number) => (
                       <button
-                        key={i}
-                        onClick={() => setMessage(`关于“${q}”，我的决定是：`)}
+                        key={e.id}
+                        className="experiment-card"
+                        onClick={() => {
+                          go('courses');
+                          setDetail(e);
+                        }}
                       >
-                        {i + 1}. {q}
-                        <ArrowUpRight size={14} />
+                        <div className="experiment-number">
+                          {String(i + 1).padStart(2, '0')}
+                        </div>
+                        <div>
+                          <div className="experiment-meta">
+                            {e.week}
+                            <span>10 分</span>
+                          </div>
+                          <h3>{e.title}</h3>
+                          <p>{e.summary}</p>
+                        </div>
+                        <ChevronRight size={17} />
                       </button>
                     ))}
                   </div>
-                )}
-                <div className="experiment-list">
-                  {draft.experiments.map((e: Any, i: number) => (
-                    <button
-                      key={e.id}
-                      className="experiment-card"
-                      onClick={() => {
-                        go('courses');
-                        setDetail(e);
-                      }}
-                    >
-                      <div className="experiment-number">
-                        {String(i + 1).padStart(2, '0')}
-                      </div>
-                      <div>
-                        <div className="experiment-meta">
-                          {e.week}
-                          <span>10 分</span>
-                        </div>
-                        <h3>{e.title}</h3>
-                        <p>{e.summary}</p>
-                      </div>
-                      <ChevronRight size={17} />
-                    </button>
-                  ))}
-                </div>
-                <div className="preview-bottom">
-                  <span>
-                    <span className="dot" />
-                    {s.release
-                      ? `已发布 v${s.release.revision}`
-                      : '预置课程 · 待发布'}
-                  </span>
-                  <Button variant="outline" onClick={() => go('courses')}>
-                    查看完整草案
-                    <ArrowUpRight size={16} />
-                  </Button>
-                </div>
-              </section>
-            </div>
+                  <div className="preview-bottom">
+                    <span>
+                      <span className="dot" />
+                      {s.release
+                        ? `已发布 v${s.release.revision}`
+                        : '预置课程 · 待发布'}
+                    </span>
+                    <Button variant="outline" onClick={() => go('courses')}>
+                      查看完整草案
+                      <ArrowUpRight size={16} />
+                    </Button>
+                  </div>
+                </section>
+              </div>
+            </>
           )}
           {view === 'overview' && admin && (
             <>
               {!course ? (
                 <Empty
                   title="先选择一门课程"
-                  body="在左侧选择或新建课程后，这里会显示该课程下的全部课堂。"
+                  body="在课程工作台选择或新建课程后，这里会显示该课程下的全部课堂。"
                 />
               ) : (
                 <>
@@ -920,10 +999,6 @@ export default function Workbench() {
                 <span className="muted">
                   {s.classes?.length || 0} 个课堂 · 每个课堂相互独立
                 </span>
-                <Button onClick={() => open('newClass')}>
-                  <Plus size={16} />
-                  开设课堂
-                </Button>
               </div>
               <div className="teams-grid">
                 {s.classes?.map((c: Any) => (
@@ -1318,16 +1393,14 @@ export default function Workbench() {
                           <div>
                             <h2>{t.name}</h2>
                             <span className="muted">
-                              {t.members.length} / {cls?.maxSize || 4} 人{' '}
-                              {t.locked ? '· 成员已锁定' : ''}
+                              {t.members.length} / {cls?.maxSize || 4} 人
                             </span>
                           </div>
                         </div>
-                        {(teacher || t.leader === s.user.id) && (
+                        {t.leader === s.user.id && (
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={!!t.locked && !teacher}
                             onClick={() => open('invite', { teamId: t.id })}
                           >
                             <Plus size={15} />
@@ -1348,46 +1421,89 @@ export default function Workbench() {
                             <span className="tag blue">组长</span>
                           ) : (
                             <>
-                              {(teacher || t.leader === s.user.id) && (
-                                <button
-                                  className="text-action"
-                                  disabled={!!t.locked && !teacher}
-                                  onClick={() =>
-                                    open('teamConfirm', {
-                                      teamId: t.id,
-                                      userId: m.id,
-                                      action: 'transfer',
-                                      label: `将组长转让给 ${m.name}`,
-                                    })
-                                  }
-                                >
-                                  转让
-                                </button>
-                              )}
-                              {teacher && (
-                                <button
-                                  className="text-action danger"
-                                  onClick={() =>
-                                    open('teamConfirm', {
-                                      teamId: t.id,
-                                      userId: m.id,
-                                      action: 'remove',
-                                      label: `移除成员 ${m.name}`,
-                                    })
-                                  }
-                                >
-                                  移除
-                                </button>
+                              {t.leader === s.user.id && (
+                                <>
+                                  <button
+                                    className="text-action"
+                                    onClick={() =>
+                                      open('teamConfirm', {
+                                        teamId: t.id,
+                                        userId: m.id,
+                                        action: 'transfer',
+                                        label: `将组长转让给 ${m.name}`,
+                                      })
+                                    }
+                                  >
+                                    转让
+                                  </button>
+                                  <button
+                                    className="text-action danger"
+                                    onClick={() =>
+                                      open('teamConfirm', {
+                                        teamId: t.id,
+                                        userId: m.id,
+                                        action: 'remove',
+                                        label: `移除成员 ${m.name}`,
+                                      })
+                                    }
+                                  >
+                                    移除
+                                  </button>
+                                </>
                               )}
                             </>
                           )}
                         </div>
                       ))}
+                      {(t.repo ||
+                        t.members.some((m: Any) => m.id === s.user.id)) && (
+                        <div className="member">
+                          <span className="avatar">
+                            <Link2 size={15} />
+                          </span>
+                          <div>
+                            {t.repo ? (
+                              <>
+                                <a
+                                  href={t.repo}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {t.repo}
+                                </a>
+                                <small>提交核验时会参考该仓库</small>
+                              </>
+                            ) : (
+                              <small className="muted">
+                                尚未设置 GitHub 仓库地址
+                              </small>
+                            )}
+                          </div>
+                          {t.repo && (
+                            <button
+                              className="text-action"
+                              onClick={() => cp(t.repo)}
+                            >
+                              复制
+                            </button>
+                          )}
+                          {t.members.some((m: Any) => m.id === s.user.id) && (
+                            <button
+                              className="text-action"
+                              onClick={() => {
+                                open('repo', { teamId: t.id });
+                                setForm({ repo: t.repo || '' });
+                              }}
+                            >
+                              {t.repo ? '修改' : '设置'}
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {student && t.leader !== s.user.id && (
                         <Button
                           className="mt-4"
                           variant="outline"
-                          disabled={!!t.locked}
                           onClick={() =>
                             open('teamConfirm', {
                               teamId: t.id,
@@ -1412,49 +1528,6 @@ export default function Workbench() {
                     }
                   />
                 )}
-                <section className="panel data-panel">
-                  <h2>邀请记录</h2>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Team</TableHead>
-                        <TableHead>邀请邮箱</TableHead>
-                        <TableHead>状态</TableHead>
-                        <TableHead>操作</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {s.invites?.map((iv: Any) => (
-                        <TableRow key={iv.id}>
-                          <TableCell>{iv.teamName}</TableCell>
-                          <TableCell>{iv.email}</TableCell>
-                          <TableCell>
-                            <Status value={iv.status} />
-                          </TableCell>
-                          <TableCell>
-                            {iv.status === 'pending' &&
-                              iv.email !== s.user.email && (
-                                <button
-                                  className="text-action"
-                                  onClick={() =>
-                                    mutation('invite-action', {
-                                      id: iv.id,
-                                      action: 'revoke',
-                                    })
-                                  }
-                                >
-                                  撤销
-                                </button>
-                              )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  {!s.invites?.length && (
-                    <p className="muted py-4">暂无邀请记录</p>
-                  )}
-                </section>
                 {teacher && (
                   <section className="panel data-panel">
                     <h2>课堂学生</h2>
@@ -1755,14 +1828,31 @@ export default function Workbench() {
                   </div>
                   <h2>Pi Agent 连接器</h2>
                   <p>
-                    在你配置 Pi
-                    的机器上运行连接器。它主动领取课程分析和核验任务，网站无需访问模型账号。
+                    服务器启动时会自动在本机 PATH 中查找并验证
+                    Pi，无需再手动配置连接器。找不到时会显示未连接；找到但不可用（如未配置
+                    provider）会显示具体原因。
                   </p>
                   <Status
                     value={
                       s.health?.online && s.health?.acp ? 'complete' : 'queued'
                     }
                   />
+                  {s.health?.acpError && (
+                    <div className="feedback error">{s.health.acpError}</div>
+                  )}
+                  {s.health &&
+                    !s.health.acp &&
+                    !s.health.acpError &&
+                    s.health.acpFound === false && (
+                      <div className="feedback">
+                        未在本机 PATH 找到 pi-acp，请先安装
+                        Pi；安装后服务器会在一分钟内自动识别。
+                      </div>
+                    )}
+                  <p className="muted">
+                    仅 Cloudflare Sites
+                    部署需要配置连接器；自托管服务器会自动发现本机 Pi。
+                  </p>
                   <div className="button-row">
                     <Button onClick={() => open('pair')}>
                       <Plus size={15} />
@@ -1819,6 +1909,9 @@ export default function Workbench() {
                       s.health?.online && s.health?.mail ? 'complete' : 'queued'
                     }
                   />
+                  {s.health?.mailError && (
+                    <div className="feedback error">{s.health.mailError}</div>
+                  )}
                   <p className="muted">
                     教师注册时自选身份；课程管理员由部署时配置的管理员邮箱决定。
                   </p>
@@ -1912,6 +2005,7 @@ export default function Workbench() {
                     login: '邮箱登录 / 注册',
                     profile: '完善个人信息',
                     newCourse: '新建课程',
+                    delCourse: '删除课程',
                     newClass: '开设课堂',
                     join: '加入课堂',
                     createTeam: '创建 Team',
@@ -1924,6 +2018,7 @@ export default function Workbench() {
                     review: '复核与成绩发布',
                     pair: '生成连接器凭据',
                     settings: '课堂规则',
+                    repo: 'GitHub 仓库地址',
                   } as Any
                 )[modal?.type]
               }
@@ -2245,6 +2340,57 @@ export default function Workbench() {
                 onClick={() => mutation('team-action', modal)}
               >
                 确认变更
+              </Button>
+            </>
+          )}
+          {modal?.type === 'repo' && (
+            <>
+              <p className="muted">
+                提交核验时会参考该仓库。留空保存可清除已设置的仓库地址。
+              </p>
+              <label>
+                仓库地址
+                <Input
+                  placeholder="https://github.com/owner/repo"
+                  value={form.repo || ''}
+                  onChange={(e) => field('repo', e.target.value)}
+                />
+              </label>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  mutation(
+                    'team-repo',
+                    { teamId: modal.teamId, repo: form.repo || '' },
+                    '仓库地址已保存',
+                  )
+                }
+              >
+                保存
+              </Button>
+            </>
+          )}
+          {modal?.type === 'delCourse' && (
+            <>
+              <p>
+                将删除 <strong>{modal.title}</strong>（{modal.term}
+                ）及其草案、发布记录和课程素材，不可恢复。
+              </p>
+              <p className="muted">
+                若已有老师基于这门课开设课堂，系统会拒绝删除。
+              </p>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  act(async () => {
+                    await call('course-delete', { courseId: modal.courseId });
+                    if (s.selected === modal.courseId) setSelected('');
+                    setModal(null);
+                    setNotice('课程已删除');
+                  })
+                }
+              >
+                确认删除
               </Button>
             </>
           )}
