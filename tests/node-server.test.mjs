@@ -106,6 +106,10 @@ test('端到端：进程内 runner 完成 draft 与 grade 任务；SMTP 未配�
   const st=(await call(base,'state',undefined,student.cookie)).data;
   assert.equal(st.health.mail,false);assert.ok(st.health.mailError,'应有 mailError 提示');
   assert.equal(st.health.acp,true);assert.equal(st.health.acpError,null);
+  // 使用助手「小课」：经 runPiPrint + smart fixture（无任务类型的 prompt 固定回 'ok'），历史入库
+  const as=await call(base,'assist',{message:'怎么加入课堂？'},admin.cookie);assert.equal(as.status,200,JSON.stringify(as.data));assert.equal(as.data.reply,'ok');
+  const hist=(await call(base,'state',undefined,admin.cookie)).data.assistHistory;
+  assert.equal(hist.length,2);assert.deepEqual(hist.map(h=>h.role),['user','assistant']);assert.equal(hist[1].content,'ok');
   const mails=app.sqlite.prepare("SELECT status FROM jobs WHERE kind='email'").all();
   assert.ok(mails.length>0,'登录验证码应产生邮件任务');
   assert.ok(mails.every(m=>m.status==='queued'),'SMTP 未配置时邮件任务不得投递');
@@ -129,5 +133,7 @@ test('PATH 无 pi：health.acp 为 false 且 acpFound 为 false（界面据此�
   assert.equal(s.health.acpFound,false);assert.equal(s.health.acpError,null);
   assert.match(app.piState.error,/未在本机 PATH 找到 pi/);
   assert.ok(app.piState.spec===null);
+  // pi 不可用：assist 诚实降级 503，不编造回答
+  const noPi=await call(base,'assist',{message:'怎么用？'},admin.cookie);assert.equal(noPi.status,503);assert.match(noPi.data.error,/小课暂时不可用/);
  }finally{await app.close();await fs.rm(emptyBin,{recursive:true,force:true,maxRetries:10,retryDelay:200});await fs.rm(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 },{timeout:60000});

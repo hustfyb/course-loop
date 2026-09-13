@@ -93,7 +93,7 @@ test('capacity, unregistered invitation visibility, cancellation and unresolved 
  const j=(await req(x,'chat',{courseId:cid,message:'改任务'},a.cookie)).data.jobId;assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,409);
  assert.equal((await req(x,'job-action',{id:j,action:'cancel'},t.cookie)).status,403);await req(x,'job-action',{id:j,action:'cancel'},a.cookie);
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses').get().draft);d.questions=['MCP 是否必做？'];x.sqlite.prepare('UPDATE courses SET draft=?').run(JSON.stringify(d));assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,400);});
-test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,4);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
+test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,5);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
  const t=Date.now();sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u1','t@x.com','教师','','teacher',t);sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u2','s@x.com','学生','001','student',t);
  sqlite.prepare("INSERT INTO courses(id,owner,title,term,draft,joinCode,maxSize,deadline,maxFormal,autoPublish,created) VALUES('c1','u1','课','学期','{}','CODE123456',5,NULL,3,1,?)").run(t);
  sqlite.prepare("INSERT INTO enrollments VALUES('c1','u2')").run();sqlite.prepare("INSERT INTO teams VALUES('tm1','c1','u2','组',0,?)").run(t);sqlite.prepare("INSERT INTO members VALUES('c1','tm1','u2',1)").run();sqlite.prepare("INSERT INTO invites VALUES('iv1','tm1','n@x.com','pending',?)").run(t);
@@ -109,6 +109,43 @@ test('migration 0001 preserves legacy course data in a default class',async()=>{
  // 0002 在 0000+0001 初始化且含数据的库上执行成功，teams 增加 repo 且默认 ''
  sqlite.exec(await fs.readFile('drizzle/'+files[2],'utf8'));assert.equal(sqlite.prepare("SELECT repo FROM teams WHERE id='tm1'").get().repo,'');});
 test('mail quota failure surfaces try-tomorrow hint; other failures do not block',async()=>{const x=await init();x.env.LOCAL_DEV='0';x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?)").run(JSON.stringify({mailAt:Date.now()}));x.sqlite.prepare("INSERT INTO jobs(id,owner,kind,payload,status,error,created) VALUES('jq','system','email','{}','failed',?,?)").run('Message failed: 429 rate_limit_exceeded: daily quota exceeded',Date.now());const r=await req(x,'auth/request',{email:'q@example.com'});assert.equal(r.status,429);assert.match(r.data.error,/额度已用完.*明天再试/);x.sqlite.prepare("UPDATE jobs SET error='Message failed: 550 Invalid to field' WHERE id='jq'").run();const ok=await req(x,'auth/request',{email:'q2@example.com'});assert.equal(ok.status,200);});
+test('assist: 注入 runAssist 返回回复并记录双方消息；未注入 503 不写 assistant；未登录 401',async()=>{const x=await init();
+ // 未登录 401
+ assert.equal((await req(x,'assist',{message:'怎么用'})).status,401);
+ const s=await login(x,'s@example.com');
+ // 默认 env 无 runAssist：503 诚实降级；用户消息已写入，assistant 消息不写
+ const no=await req(x,'assist',{message:'怎么加入课堂？'},s.cookie);assert.equal(no.status,503);assert.match(no.data.error,/小课暂时不可用.*提改进意见/);
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM assist').get().n,1);
+ assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM assist WHERE role='assistant'").get().n,0);
+ // 注入假 runAssist：返回 reply，prompt 携带身份指南与历史
+ let got='';x.env.runAssist=async(p)=>{got=p;return '测试回复';};
+ const r=await req(x,'assist',{message:'正式提交谁操作？'},s.cookie);assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.reply,'测试回复');
+ assert.match(got,/你是「小课」/);assert.match(got,/怎么加入课堂？/);assert.match(got,/正式提交谁操作？/);
+ const rows=x.sqlite.prepare('SELECT role,content FROM assist ORDER BY rowid').all();
+ assert.deepEqual(rows.map(r=>r.role),['user','user','assistant']);assert.equal(rows[2].content,'测试回复');
+ // state 快照含本人 assistHistory（升序）
+ const st=(await req(x,'state',undefined,s.cookie)).data;assert.equal(st.assistHistory.length,3);assert.equal(st.assistHistory.at(-1).role,'assistant');assert.equal(st.assistHistory.at(-1).content,'测试回复');
+ // 空消息 400；runAssist 返回空 → 503
+ assert.equal((await req(x,'assist',{message:'  '},s.cookie)).status,400);
+ x.env.runAssist=async()=>'';assert.equal((await req(x,'assist',{message:'再问'},s.cookie)).status,503);});
+test('feedback: 学生提交、admin 查看与标记/重开、学生无权 feedback-action',async()=>{const x=await init();const a=await login(x,'admin@example.com');const s=await login(x,'stu@example.com');
+ assert.equal((await req(x,'feedback',{content:'x'})).status,401); // 未登录
+ const r=await req(x,'feedback',{content:'希望支持深色模式'},s.cookie);assert.equal(r.status,200);assert.deepEqual(r.data,{ok:true});
+ assert.equal((await req(x,'feedback',{content:''},s.cookie)).status,400); // 空内容
+ // admin state 含 feedbackList（用户信息 join），学生 state 不含
+ const st=(await req(x,'state',undefined,a.cookie)).data;assert.equal(st.feedbackList.length,1);
+ const fb=st.feedbackList[0];assert.equal(fb.content,'希望支持深色模式');assert.equal(fb.status,'open');assert.equal(fb.userEmail,'stu@example.com');assert.equal(fb.userName,'stu');assert.equal(fb.userRole,'student');
+ assert.equal((await req(x,'state',undefined,s.cookie)).data.feedbackList,undefined);
+ // 越权与参数校验
+ assert.equal((await req(x,'feedback-action',{id:fb.id,action:'close'},s.cookie)).status,403);
+ assert.equal((await req(x,'feedback-action',{id:fb.id,action:'hack'},a.cookie)).status,400);
+ assert.equal((await req(x,'feedback-action',{id:'none',action:'close'},a.cookie)).status,404);
+ // close → closed；open 重开；均写 audit
+ assert.equal((await req(x,'feedback-action',{id:fb.id,action:'close'},a.cookie)).status,200);
+ assert.equal(x.sqlite.prepare('SELECT status FROM feedback WHERE id=?').get(fb.id).status,'closed');
+ assert.equal((await req(x,'feedback-action',{id:fb.id,action:'open'},a.cookie)).status,200);
+ assert.equal(x.sqlite.prepare('SELECT status FROM feedback WHERE id=?').get(fb.id).status,'open');
+ assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM audit WHERE action LIKE 'feedback.%'").get().n,2);});
 test('course deletion: empty course only, admin only, cascades course-level data',async()=>{const x=await init();const {a,t,cid}=await classroom(x);
  // 有课堂的课程拒绝删除；非管理员拒绝
  assert.equal((await req(x,'course-delete',{courseId:cid},t.cookie)).status,403);assert.equal((await req(x,'course-delete',{courseId:cid},a.cookie)).status,409);

@@ -14,7 +14,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import ts from 'typescript';
 import nodemailer from 'nodemailer';
 import {runPiPrint} from '../connector/pi-print.mjs';
-import {startRunner} from '../connector/runner.mjs';
+import {startRunner,agentIdentity} from '../connector/runner.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(here,'..');
 const execFileAsync=promisify(execFile);
@@ -55,6 +55,9 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  else updateHealth({mailError:'未配置 SMTP_HOST，邮件功能离线：登录验证码与邀请邮件不会投递'});
  // Pi 扫描与探测：启动时 + 每 scanIntervalMs。acpAt 只在探测成功时更新；找不到时 acpFound=false 且不写 acpError（界面显示「未连接」）；找到但探测失败才写 acpError。
  const piState={spec:null,error:null};
+ // 使用助手「小课」：pi 可用时以 print 单发（--no-tools）注入 runAssist，工作目录独立于任务目录；
+ // piState.spec 随扫描动态变化，getter 保证不可用期间 env.runAssist 为 undefined（端点据此 503 诚实降级）。
+ Object.defineProperty(platform,'runAssist',{enumerable:true,get:()=>piState.spec?async(prompt)=>{const dir=path.join(workRoot,'assist',crypto.randomUUID());await fs.mkdir(dir,{recursive:true});const r=await runPiPrint(piState.spec,{cwd:dir,prompt:agentIdentity+'\n\n'+prompt,tools:false,timeoutMs:90000});return r.text;}:undefined});
  async function scan(){const found=await findPi({pathEnv:pathEnv??env.PATH,explicit:env.PI_COMMAND});
   if(!found){piState.spec=null;piState.error='未在本机 PATH 找到 pi，请先安装 Pi（npm install -g @earendil-works/pi-coding-agent）';updateHealth({acpFound:false,acpError:null});return;}
   const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // 同目录依赖（如 node）随 pi 一并可达

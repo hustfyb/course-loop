@@ -29,6 +29,7 @@ import {
   KeyRound,
   Trash2,
   Link2,
+  Inbox,
 } from 'lucide-react';
 import {
   SidebarProvider,
@@ -102,6 +103,7 @@ const navsByRole: Record<string, readonly (readonly [string, string, Any])[]> =
       ['studio', '课程工作台', Sparkles],
       ['courses', '实验与发布', BookOpen],
       ['overview', '课堂总览', School],
+      ['feedback', '意见管理', Inbox],
       ['settings', '连接与设置', Settings2],
     ],
     teacher: [
@@ -207,6 +209,11 @@ export default function Workbench() {
   const [form, setForm] = useState<Any>({});
   const [detail, setDetail] = useState<Any>(null);
   const [token, setToken] = useState('');
+  const [assistOpen, setAssistOpen] = useState(false);
+  const [assistText, setAssistText] = useState('');
+  const [assistSending, setAssistSending] = useState(false);
+  const [assistLocal, setAssistLocal] = useState<Any[]>([]);
+  const assistScrollRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const refresh = useCallback(async () => {
     try {
@@ -359,6 +366,11 @@ export default function Workbench() {
       '每个课堂，独立运转。',
       '查看本课程下教师开设的课堂、学生与小组规模。',
     ],
+    feedback: [
+      'FEEDBACK',
+      '听听大家怎么说。',
+      '使用问题与改进意见都汇总在这里。',
+    ],
     classes: [
       'MY CLASSES',
       '开设课堂，开始教学。',
@@ -387,6 +399,62 @@ export default function Workbench() {
         ],
   };
   const heading = headings[view] || headings.courses;
+  const assistHistory: Any[] = s.assistHistory || [];
+  // 本地消息与服务端历史按 角色+内容 去重，refresh 后以服务端历史为准
+  const assistMsgs = [
+    ...assistHistory,
+    ...assistLocal.filter(
+      (l) =>
+        !assistHistory.some(
+          (h) => h.role === l.role && h.content === l.content,
+        ),
+    ),
+  ];
+  useEffect(() => {
+    const el = assistScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [assistMsgs.length, assistSending, assistOpen]);
+  async function sendAssist() {
+    const text = assistText.trim();
+    if (!text || assistSending) return;
+    if (!s.user) {
+      open('login');
+      return;
+    }
+    setAssistText('');
+    setAssistSending(true);
+    const stamp = Date.now();
+    setAssistLocal((l) => [
+      ...l,
+      { id: 'local-' + stamp, role: 'user', content: text, created: stamp },
+    ]);
+    try {
+      const r = await call('assist', { message: text });
+      setAssistLocal((l) => [
+        ...l,
+        {
+          id: 'local-r-' + stamp,
+          role: 'assistant',
+          content: r.reply,
+          created: Date.now(),
+        },
+      ]);
+      refresh();
+    } catch (e: Any) {
+      setAssistLocal((l) => [
+        ...l,
+        {
+          id: 'local-e-' + stamp,
+          role: 'system',
+          content: e.message,
+          created: Date.now(),
+          error: true,
+        },
+      ]);
+    } finally {
+      setAssistSending(false);
+    }
+  }
   const inviteBanners = (list: Any[]) =>
     list?.map((iv: Any) => (
       <div className="invite-banner" key={iv.id}>
@@ -1023,6 +1091,89 @@ export default function Workbench() {
                     />
                   )}
                 </>
+              )}
+            </>
+          )}
+          {view === 'feedback' && admin && (
+            <>
+              <div className="toolbar">
+                <span className="muted">
+                  {s.feedbackList?.length || 0} 条意见 ·
+                  来自「问小课」面板的提交，按时间倒序
+                </span>
+              </div>
+              {s.feedbackList?.length ? (
+                <section className="panel">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>时间</TableHead>
+                        <TableHead>用户</TableHead>
+                        <TableHead>内容</TableHead>
+                        <TableHead>状态</TableHead>
+                        <TableHead>操作</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {s.feedbackList.map((f: Any) => (
+                        <TableRow key={f.id}>
+                          <TableCell>{fmt(f.created)}</TableCell>
+                          <TableCell>
+                            {f.userName}
+                            <div className="muted">
+                              {f.userEmail} ·{' '}
+                              {f.userRole === 'admin'
+                                ? '管理员'
+                                : f.userRole === 'teacher'
+                                  ? '教师'
+                                  : '学生'}
+                            </div>
+                          </TableCell>
+                          <TableCell className="fb-content">
+                            {f.content}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={
+                                'tag ' +
+                                (f.status === 'open' ? 'amber' : 'blue')
+                              }
+                            >
+                              {f.status === 'open' ? '待处理' : '已处理'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() =>
+                                mutation(
+                                  'feedback-action',
+                                  {
+                                    id: f.id,
+                                    action:
+                                      f.status === 'open' ? 'close' : 'open',
+                                  },
+                                  f.status === 'open'
+                                    ? '已标记处理'
+                                    : '已重新打开',
+                                )
+                              }
+                            >
+                              {f.status === 'open' ? '标记已处理' : '重新打开'}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </section>
+              ) : (
+                <Empty
+                  title="暂无意见"
+                  body="用户通过右下角「问小课」面板提交的改进意见会显示在这里。"
+                />
               )}
             </>
           )}
@@ -2122,6 +2273,7 @@ export default function Workbench() {
                     pair: '生成连接器凭据',
                     settings: '课堂规则',
                     repo: 'GitHub 仓库地址',
+                    feedback: '提改进意见',
                   } as Any
                 )[modal?.type]
               }
@@ -2139,7 +2291,9 @@ export default function Workbench() {
                         ? '开设后生成课堂邀请码，学生凭码加入。'
                         : modal?.type === 'join'
                           ? '输入教师分享的课堂邀请码，加入后即可进行实验。'
-                          : '提交前请核对内容。'}
+                          : modal?.type === 'feedback'
+                            ? '使用中遇到的问题或改进建议都会记录，课程负责人会定期查阅。'
+                            : '提交前请核对内容。'}
             </DialogDescription>
           </DialogHeader>
           {error && (
@@ -2690,6 +2844,30 @@ export default function Workbench() {
               </Button>
             </>
           )}
+          {modal?.type === 'feedback' && (
+            <>
+              <textarea
+                className="text-area"
+                rows={6}
+                aria-label="改进意见"
+                value={form.content || ''}
+                onChange={(e) => field('content', e.target.value)}
+                placeholder="描述你遇到的问题或想改进的地方。"
+              />
+              <Button
+                disabled={busy || !form.content?.trim()}
+                onClick={() =>
+                  mutation(
+                    'feedback',
+                    { content: form.content },
+                    '意见已记录，课程负责人会查阅',
+                  )
+                }
+              >
+                提交意见
+              </Button>
+            </>
+          )}
           {modal?.type === 'settings' && (
             <>
               <label>
@@ -2745,6 +2923,120 @@ export default function Workbench() {
           )}
         </DialogContent>
       </Dialog>
+      <button
+        className="assist-fab"
+        aria-label="问小课"
+        aria-expanded={assistOpen}
+        onClick={() => setAssistOpen((o) => !o)}
+      >
+        <Sparkles size={19} />
+        问小课
+      </button>
+      {assistOpen && (
+        <div className="assist-panel" role="dialog" aria-label="小课助手">
+          <header className="assist-head">
+            <span className="assist-title">
+              <Sparkles size={16} />
+              小课助手
+            </span>
+            <span className="assist-actions">
+              {s.user && (
+                <button
+                  className="assist-feedback-btn"
+                  onClick={() => open('feedback')}
+                >
+                  提改进意见
+                </button>
+              )}
+              <button
+                className="assist-close"
+                aria-label="关闭小课助手"
+                onClick={() => setAssistOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </span>
+          </header>
+          {!s.user ? (
+            <div className="assist-login">
+              <p>
+                你好，我是小课，课序平台的使用助手。登录后可以问我平台使用问题，也可以提交改进意见。
+              </p>
+              <Button size="sm" onClick={() => open('login')}>
+                <Mail size={15} />
+                邮箱登录
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div className="assist-messages" ref={assistScrollRef}>
+                {!assistMsgs.length && (
+                  <div className="assist-msg bot">
+                    <p>
+                      你好，我是小课。加入课堂、组队、提交实验或查看成绩有问题，都可以问我。
+                    </p>
+                  </div>
+                )}
+                {assistMsgs.map((m: Any) => (
+                  <div
+                    key={m.id}
+                    className={
+                      'assist-msg ' +
+                      (m.role === 'user'
+                        ? 'user'
+                        : m.role === 'system'
+                          ? 'system'
+                          : 'bot')
+                    }
+                  >
+                    <p>{m.content}</p>
+                    {m.error && (
+                      <button
+                        className="assist-feedback-btn"
+                        onClick={() => open('feedback')}
+                      >
+                        提改进意见
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {assistSending && (
+                  <div className="assist-msg bot thinking">
+                    <LoaderCircle size={14} className="spin" />
+                    <p>小课思考中…</p>
+                  </div>
+                )}
+              </div>
+              <div className="assist-composer">
+                <input
+                  value={assistText}
+                  onChange={(e) => setAssistText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === 'Enter' &&
+                      !e.nativeEvent.isComposing &&
+                      !e.shiftKey
+                    ) {
+                      e.preventDefault();
+                      sendAssist();
+                    }
+                  }}
+                  placeholder="向小课提问…"
+                  aria-label="向小课提问"
+                  disabled={assistSending}
+                />
+                <button
+                  aria-label="发送"
+                  disabled={assistSending || !assistText.trim()}
+                  onClick={sendAssist}
+                >
+                  <Send size={16} />
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </SidebarProvider>
   );
 }
