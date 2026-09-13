@@ -946,7 +946,13 @@ export default function Workbench() {
                         <div>
                           <div className="experiment-meta">
                             {e.week}
-                            <span>10 分</span>
+                            <span>
+                              {e.rubric.reduce(
+                                (n: number, r: Any) => n + r.max,
+                                0,
+                              )}{' '}
+                              分
+                            </span>
                           </div>
                           <h3>{e.title}</h3>
                           <p>{e.summary}</p>
@@ -1195,7 +1201,12 @@ export default function Workbench() {
                         <div className="lab-bottom">
                           <span>Team 提交</span>
                           <span>
-                            10 分<ArrowUpRight size={16} />
+                            {e.rubric.reduce(
+                              (n: number, r: Any) => n + r.max,
+                              0,
+                            )}{' '}
+                            分
+                            <ArrowUpRight size={16} />
                           </span>
                         </div>
                       </button>
@@ -1692,7 +1703,15 @@ export default function Workbench() {
                           </div>
                           <div className="score">
                             {sub.report ? sub.report.total : '—'}
-                            <small>/ 10</small>
+                            <small>
+                              /{' '}
+                              {draft.experiments
+                                .find((e: Any) => e.id === sub.experimentId)
+                                ?.rubric.reduce(
+                                  (n: number, r: Any) => n + r.max,
+                                  0,
+                                ) || 100}
+                            </small>
                           </div>
                         </div>
                         {sub.error && (
