@@ -246,6 +246,20 @@ export default function Workbench() {
   const teacher = role === 'teacher';
   const student = role === 'student';
   const navs = navsByRole[role] || navsByRole.guest;
+  const [logPage, setLogPage] = useState(1);
+  const [logData, setLogData] = useState<Any>({
+    items: [],
+    total: 0,
+    page: 1,
+    pageSize: 20,
+  });
+  useEffect(() => {
+    if (!admin || view !== 'settings') return;
+    call('job-log?page=' + logPage)
+      .then(setLogData)
+      .catch(() => {});
+    // 依赖 s：跟随 7 秒轮询同步刷新当前页
+  }, [admin, view, logPage, s]);
   const course = admin
     ? s.courses?.find((c: Any) => c.id === s.selected)
     : s.course;
@@ -2123,50 +2137,83 @@ export default function Workbench() {
                 </section>
                 <section className="panel data-panel">
                   <h2>小课工作日志</h2>
-                  {!s.jobLog?.length ? (
+                  {!logData.items.length ? (
                     <p className="muted py-4">
                       还没有任务记录。与小课对话或学生提交作业后，任务会出现在这里。
                     </p>
                   ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>时间</TableHead>
-                          <TableHead>任务</TableHead>
-                          <TableHead>状态</TableHead>
-                          <TableHead>耗时</TableHead>
-                          <TableHead>说明</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {s.jobLog.map((j: Any) => (
-                          <TableRow key={j.id}>
-                            <TableCell>{fmt(j.created)}</TableCell>
-                            <TableCell>
-                              {jobKindNames[j.kind] || j.kind}
-                            </TableCell>
-                            <TableCell>
-                              <Status value={j.status} />
-                            </TableCell>
-                            <TableCell>
-                              {j.finished
-                                ? Math.max(
-                                    1,
-                                    Math.round((j.finished - j.created) / 1000),
-                                  ) + ' 秒'
-                                : '—'}
-                            </TableCell>
-                            <TableCell className="muted">
-                              {j.error
-                                ? j.error.slice(0, 80)
-                                : j.attempts > 1
-                                  ? `第 ${j.attempts} 次尝试`
-                                  : ''}
-                            </TableCell>
+                    <>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>时间</TableHead>
+                            <TableHead>任务</TableHead>
+                            <TableHead>状态</TableHead>
+                            <TableHead>耗时</TableHead>
+                            <TableHead>说明</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                        </TableHeader>
+                        <TableBody>
+                          {logData.items.map((j: Any) => (
+                            <TableRow key={j.id}>
+                              <TableCell>{fmt(j.created)}</TableCell>
+                              <TableCell>
+                                {jobKindNames[j.kind] || j.kind}
+                              </TableCell>
+                              <TableCell>
+                                <Status value={j.status} />
+                              </TableCell>
+                              <TableCell>
+                                {j.finished
+                                  ? Math.max(
+                                      1,
+                                      Math.round(
+                                        (j.finished - j.created) / 1000,
+                                      ),
+                                    ) + ' 秒'
+                                  : '—'}
+                              </TableCell>
+                              <TableCell className="muted">
+                                {j.error
+                                  ? j.error.slice(0, 80)
+                                  : j.attempts > 1
+                                    ? `第 ${j.attempts} 次尝试`
+                                    : ''}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                      <div className="log-pager">
+                        <span className="muted">
+                          共 {logData.total} 条 · 第 {logData.page} /{' '}
+                          {Math.max(
+                            1,
+                            Math.ceil(logData.total / logData.pageSize),
+                          )}{' '}
+                          页
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={logData.page <= 1}
+                          onClick={() => setLogPage((p) => p - 1)}
+                        >
+                          上一页
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={
+                            logData.page >=
+                            Math.ceil(logData.total / logData.pageSize)
+                          }
+                          onClick={() => setLogPage((p) => p + 1)}
+                        >
+                          下一页
+                        </Button>
+                      </div>
+                    </>
                   )}
                 </section>
               </div>
