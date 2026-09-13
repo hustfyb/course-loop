@@ -2,7 +2,7 @@
   "siteUrl": "http://localhost:5173",
   "token": "从教师连接设置生成，粘贴到本机 config.json",
   "acp": {
-    "command": "pi-acp",
+    "command": "pi",
     "args": [],
     "enabled": false
   },

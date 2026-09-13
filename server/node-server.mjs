@@ -1,6 +1,6 @@
 // 课序自托管服务器（Node 主运行时）。
 // 复用 lib/service.ts 的运行时无关 api(req, env)：node:sqlite 做 D1 兼容封装、本地目录做 FILES、
-// 进程内扫描并直连 Pi（pi-acp），SMTP 经 nodemailer 直发。启动：npm run build && npm run serve。
+// 进程内扫描并直连 Pi（print 单发模式），SMTP 经 nodemailer 直发。启动：npm run build && npm run serve。
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import {existsSync,mkdirSync} from 'node:fs';
@@ -13,7 +13,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import ts from 'typescript';
 import nodemailer from 'nodemailer';
-import {AcpClient} from '../connector/acp.mjs';
+import {runPiPrint} from '../connector/pi-print.mjs';
 import {startRunner} from '../connector/runner.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(here,'..');
@@ -28,11 +28,12 @@ export function createDb(dataDir){mkdirSync(dataDir,{recursive:true});const sqli
 export async function migrate(sqlite,drizzleDir){sqlite.exec('CREATE TABLE IF NOT EXISTS __migrations(name TEXT PRIMARY KEY)');const done=new Set(sqlite.prepare('SELECT name FROM __migrations').all().map(r=>r.name));for(const f of (await fs.readdir(drizzleDir)).filter(f=>f.endsWith('.sql')).sort()){if(done.has(f))continue;sqlite.exec('BEGIN');try{sqlite.exec(await fs.readFile(path.join(drizzleDir,f),'utf8'));sqlite.prepare('INSERT INTO __migrations VALUES(?)').run(f);sqlite.exec('COMMIT');}catch(e){sqlite.exec('ROLLBACK');throw e}}}
 // FILES 本地目录实现：key 为 UUID，无路径风险。
 export function localFiles(dir){mkdirSync(dir,{recursive:true});return {async put(key,bytes){await fs.writeFile(path.join(dir,key),Buffer.from(bytes instanceof ArrayBuffer?new Uint8Array(bytes):bytes))},async get(key){try{return {body:await fs.readFile(path.join(dir,key))};}catch{return null}},async delete(key){await fs.rm(path.join(dir,key),{force:true})}};}
-// 在本机 PATH 中查找 pi-acp；PI_COMMAND 显式指定时跳过扫描。返回 {command,args,shell} 或 null。
-export async function findPi({pathEnv=process.env.PATH,explicit}={}){if(explicit)return piSpec(explicit);const cmd=process.platform==='win32'?'where.exe':'which';let out;try{({stdout:out}=await execFileAsync(cmd,['pi-acp'],{env:{...process.env,PATH:pathEnv}}));}catch{return null}const lines=String(out).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);if(!lines.length)return null;let chosen=lines[0];if(process.platform==='win32')chosen=lines.find(l=>/\.(cmd|exe|bat)$/i.test(l))||lines[0];return piSpec(chosen);}
+// 在本机 PATH 中查找 pi；PI_COMMAND 显式指定时跳过扫描。返回 {command,args,shell} 或 null。
+export async function findPi({pathEnv=process.env.PATH,explicit}={}){if(explicit)return piSpec(explicit);const cmd=process.platform==='win32'?'where.exe':'which';let out;try{({stdout:out}=await execFileAsync(cmd,['pi'],{env:{...process.env,PATH:pathEnv}}));}catch{return null}const lines=String(out).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);if(!lines.length)return null;let chosen=lines[0];if(process.platform==='win32')chosen=lines.find(l=>/\.(cmd|exe|bat)$/i.test(l))||lines[0];return piSpec(chosen);}
 function piSpec(command){return {command,args:[],shell:process.platform==='win32'&&/\.(cmd|bat)$/i.test(command)};}
-// 探针：向 Pi 提一个最小问题验证配置可用性；失败时返回截断的错误摘要（provider 未配置等原样保留）。
-export async function probePi(spec,{cwd,timeoutMs=60000}={}){let client;try{client=new AcpClient(spec.command,spec.args||[],{cwd:cwd||process.cwd(),timeout:timeoutMs,shell:!!spec.shell});await client.run(cwd||process.cwd(),'请只回复 ok');return {ok:true};}catch(e){return {ok:false,error:String(e?.message||e).slice(0,300)};}finally{try{client?.close();}catch{}}}
+// 探针：用 print 单发模式（--no-tools）向 Pi 提一个最小问题验证配置可用性，返回文本非空即通过；
+// 失败时返回截断的错误摘要（provider 未配置等原样保留）。
+export async function probePi(spec,{cwd,timeoutMs=60000}={}){try{const r=await runPiPrint(spec,{cwd:cwd||process.cwd(),prompt:'请只回复 ok',timeoutMs,tools:false});return String(r.text||'').trim()?{ok:true}:{ok:false,error:'Pi 探测未返回内容'};}catch(e){return {ok:false,error:String(e?.message||e).slice(0,300)};}}
 // lib/service.ts 是 TypeScript：启动时转译到数据目录缓存后 import（与 tests/service.test.mjs 同法）。
 export async function loadApi(cacheDir){await fs.mkdir(cacheDir,{recursive:true});for(const name of ['domain','seed','service']){let src=await fs.readFile(path.join(root,'lib',name+'.ts'),'utf8');src=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replaceAll("'./seed'","'./seed.mjs'").replaceAll("'./domain'","'./domain.mjs'");await fs.writeFile(path.join(cacheDir,name+'.mjs'),src);}return (await import(pathToFileURL(path.join(cacheDir,'service.mjs')).href+'?t='+Date.now())).api;}
 export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'data'),env=process.env,pathEnv,pollIntervalMs=2000,scanIntervalMs=60000,probeTimeoutMs=60000,clientDir=path.join(root,'dist','client'),serverEntry=path.join(root,'dist','server','index.js'),drizzleDir=path.join(root,'drizzle'),log=console.log}={}){
@@ -55,8 +56,8 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  // Pi 扫描与探测：启动时 + 每 scanIntervalMs。acpAt 只在探测成功时更新；找不到时 acpFound=false 且不写 acpError（界面显示「未连接」）；找到但探测失败才写 acpError。
  const piState={spec:null,error:null};
  async function scan(){const found=await findPi({pathEnv:pathEnv??env.PATH,explicit:env.PI_COMMAND});
-  if(!found){piState.spec=null;piState.error='未在本机 PATH 找到 pi-acp，请先安装 Pi';updateHealth({acpFound:false,acpError:null});return;}
-  const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // pi-acp 适配器需要在同目录找到 pi
+  if(!found){piState.spec=null;piState.error='未在本机 PATH 找到 pi，请先安装 Pi（npm install -g @earendil-works/pi-coding-agent）';updateHealth({acpFound:false,acpError:null});return;}
+  const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // 同目录依赖（如 node）随 pi 一并可达
   const probe=await probePi(found,{cwd:workRoot,timeoutMs:probeTimeoutMs});
   if(probe.ok){piState.spec=found;piState.error=null;updateHealth({acpFound:true,acpAt:Date.now(),acpError:null});}
   else{piState.spec=null;piState.error=probe.error;updateHealth({acpFound:true,acpError:probe.error});}}

@@ -13,11 +13,11 @@
 ## 当前结构
 
 - `app/workbench.tsx`：管理员/教师/学生三套工作台、实验预览、Team、提交报告、课堂设置及对话。
-- `server/node-server.mjs`：自托管 Node 服务器（主运行时）。node:sqlite 本地库 + 幂等迁移、本地文件目录、静态资源与构建产物页面渲染、启动时在 PATH 自动扫描 Pi（`pi-acp`）并探测、进程内任务 runner、SMTP 直发邮件。
+- `server/node-server.mjs`：自托管 Node 服务器（主运行时）。node:sqlite 本地库 + 幂等迁移、本地文件目录、静态资源与构建产物页面渲染、启动时在 PATH 自动扫描 Pi（`pi`，print 单发模式）并探测、进程内任务 runner、SMTP 直发邮件。
 - `lib/service.ts`：运行时无关的 API（邮箱码与会话、角色注册、课堂开设与加入、邀请和小组约束、版本发布、Agent 队列、成绩及申诉），同时被 Node 服务器与 Cloudflare 部署复用。
 - `lib/seed.ts`：四次实验的任务、提交清单和评分项；非写死的四个业务分支。
 - `db/schema.ts`、`drizzle/`：数据库结构与迁移（0001 引入 classes 表，courseId 归口到 classId）。
-- `connector/`：备选接入方式（仅 Cloudflare Sites 部署需要）——独立 Node 进程轮询网站，SMTP 邮件与 Pi ACP stdio 连接；`connector/runner.mjs` 被 Node 服务器进程内复用。
+- `connector/`：备选接入方式（仅 Cloudflare Sites 部署需要）——独立 Node 进程轮询网站，SMTP 邮件与 Pi print 单发执行；`connector/runner.mjs` 被 Node 服务器进程内复用。ACP 适配器（`connector/acp.mjs`）保留为备用通道，默认不使用。
 - `public/materials/`：原始课程素材压缩包，教学留空和故意 bug 保留。
 
 ## 本地启动（自托管，推荐）
@@ -33,12 +33,14 @@ npm run serve
 
 ### Pi（Agent）接入
 
-服务器启动时及每 60 秒在本机 PATH 自动扫描 `pi-acp`（Windows 用 `where.exe`），扫描到后主动发探针问题验证配置：
+Agent 执行走 **Pi 原生 print 单发模式**：runner 把完整 prompt 写入任务工作目录的 `PROMPT.md`，调用 `pi -p --mode json @PROMPT.md`（探针加 `--no-tools`），从 stdout 的 NDJSON 事件中取最后一个 assistant `message_end` 的文本作为结果。安装 Pi（`npm install -g @earendil-works/pi-coding-agent`）并配置好 provider 即可，无需 pi-acp 适配器；ACP 通道（`connector/acp.mjs`）保留为备用。
+
+服务器启动时及每 60 秒在本机 PATH 自动扫描 `pi`（Windows 用 `where.exe`），扫描到后主动发探针问题验证配置：
 
 - **已安装且配置可用**：顶部显示「Pi 已连接」，任务由服务器进程内直接执行，无需任何手动配置。
 - **未安装**：显示「Pi 未连接」，Agent 类任务留在队列等待；安装后一分钟内自动接入。
 - **已安装但不可用**（如未配置 provider）：显示「Pi 待配置」及具体原因（设置页同步显示错误文本）。
-- 也可用环境变量 `PI_COMMAND` 显式指定 pi-acp 路径，跳过扫描。
+- 也可用环境变量 `PI_COMMAND` 显式指定 pi 路径，跳过扫描。
 
 设置页里的「生成连接凭据 / 下载连接器 / 连接说明」仅 Cloudflare Sites 部署需要；自托管模式下的 pair 凭据由服务器启动时自动生成并覆盖写入。
 
@@ -91,7 +93,7 @@ npm ci
 npm test
 ```
 
-接口测试使用内存 SQLite 和 R2 适配测试替身；`tests/node-server.test.mjs` 使用临时目录、假 pi-acp 与智能 ACP fixture 做端到端验证（建课→发布→入课→建队→上传→练习提交→满分报告），证明协议与队列交互，不证明真实模型质量。发布前还需 `npm run build`、`npm run typecheck`，以及真实 Agent/邮件连通验证。
+接口测试使用内存 SQLite 和 R2 适配测试替身；`tests/node-server.test.mjs` 使用临时目录、假 pi 与 print 模式 fixture 做端到端验证（建课→发布→入课→建队→上传→练习提交→满分报告），证明协议与队列交互，不证明真实模型质量。发布前还需 `npm run build`、`npm run typecheck`，以及真实 Agent/邮件连通验证。
 
 ## 规则与限制
 
@@ -99,6 +101,6 @@ npm test
 
 Team 成员管理由学生自行负责：组长邀请/撤销邀请/转让组长/移除组员，组员可退出，组长退出前须先转让；教师与管理员不干预成员。正式提交保留成员快照但不再锁定成员，提交后仍可调整。每个 Team 可维护自己的 GitHub 仓库地址，组员可设置、修改或清空。
 
-工作目录不是沙箱。不要在含个人资料或凭据的主机上无隔离执行学生程序；ACP 不提供隔离保障。Web 端不执行上传代码。学生问答只能证明回答与成果的一致性，不能可靠证明作者身份。
+工作目录不是沙箱。不要在含个人资料或凭据的主机上无隔离执行学生程序；Pi 执行不提供隔离保障。Web 端不执行上传代码。学生问答只能证明回答与成果的一致性，不能可靠证明作者身份。
 
 首版支持 PDF 文本提取、DOCX、Markdown、ZIP；扫描 PDF 需另行提供可读文本。正式核验必须保留无法验证的项目，不能将未执行的测试转述为已通过。

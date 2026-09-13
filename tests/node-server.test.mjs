@@ -7,19 +7,21 @@ import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createDb,migrate,wrapD1,localFiles,findPi,probePi,startServer} from '../server/node-server.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
-const smartFixture=path.join(here,'fixtures','smart-acp.mjs');
-const brokenFixture=path.join(here,'fixtures','broken-acp.mjs');
+const smartFixture=path.join(here,'fixtures','smart-pi.mjs');
+const brokenFixture=path.join(here,'fixtures','broken-pi.mjs');
 const drizzleDir=path.resolve(here,'..','drizzle');
-// 生成临时 bin 目录，内置 pi-acp 启动包装（Windows 下为 pi-acp.cmd）。
+// 生成临时 bin 目录，内置 pi 启动包装（Windows 下为 pi.cmd）。
 // fixture 复制进纯 ASCII 的临时目录：cmd.exe 按 ANSI 码页解析批处理，中文路径会乱码。
 async function makeFakePiBin(fixture){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pi-bin-'));
  const local=path.join(dir,'fake-pi.mjs');
  await fs.copyFile(fixture,local);
- if(process.platform==='win32')await fs.writeFile(path.join(dir,'pi-acp.cmd'),`@"${process.execPath}" "%~dp0fake-pi.mjs" %*\r\n`);
- else{await fs.writeFile(path.join(dir,'pi-acp'),`#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-pi.mjs" "$@"\n`);await fs.chmod(path.join(dir,'pi-acp'),0o755);}
+ if(process.platform==='win32')await fs.writeFile(path.join(dir,'pi.cmd'),`@"${process.execPath}" "%~dp0fake-pi.mjs" %*\r\n`);
+ else{await fs.writeFile(path.join(dir,'pi'),`#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-pi.mjs" "$@"\n`);await fs.chmod(path.join(dir,'pi'),0o755);}
  return dir;
 }
+// 读取 fixture 记录的调用日志（FAKE_PI_LOG，JSON Lines）。
+async function readPiLog(logFile){return (await fs.readFile(logFile,'utf8')).trim().split('\n').map(l=>JSON.parse(l));}
 async function until(fn,timeoutMs=90000,step=250){const end=Date.now()+timeoutMs;let last;while(Date.now()<end){last=await fn();if(last)return last;await new Promise(r=>setTimeout(r,step));}throw Error('等待超时：'+JSON.stringify(last));}
 test('DB 封装 + 幂等迁移：连跑两次不报错，batch 事务可回滚',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'course-loop-db-'));
@@ -42,12 +44,12 @@ test('FILES 本地目录：put/get/delete',async()=>{
  try{const files=localFiles(dir);await files.put('abc-123',Buffer.from('hello'));const obj=await files.get('abc-123');assert.equal(Buffer.from(obj.body).toString(),'hello');await files.delete('abc-123');assert.equal(await files.get('abc-123'),null);assert.equal(await files.get('不存在'),null);}
  finally{await fs.rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 });
-test('Pi 扫描：PATH 中的假 pi-acp 可被发现，空 PATH 未找到',async()=>{
+test('Pi 扫描：PATH 中的假 pi 可被发现，空 PATH 未找到',async()=>{
  const bin=await makeFakePiBin(smartFixture);
  try{
   const found=await findPi({pathEnv:bin+path.delimiter+process.env.PATH});
-  assert.ok(found,'应扫描到假 pi-acp');
-  assert.match(found.command,/pi-acp(\.cmd)?$/i);
+  assert.ok(found,'应扫描到假 pi');
+  assert.match(found.command,/pi(\.cmd)?$/i);
   if(process.platform==='win32')assert.equal(found.shell,true,'.cmd 需要 shell');
   const empty=await fs.mkdtemp(path.join(os.tmpdir(),'pi-empty-'));
   try{assert.equal(await findPi({pathEnv:empty}),null,'空 PATH 应未找到');}
@@ -56,12 +58,17 @@ test('Pi 扫描：PATH 中的假 pi-acp 可被发现，空 PATH 未找到',async
 });
 test('探测：正常 fixture 在线且 acpError 为空；provider 配置错误 fixture 离线且有错误',async()=>{
  const work=await fs.mkdtemp(path.join(os.tmpdir(),'pi-probe-'));
+ const logFile=path.join(work,'pi-calls.log');process.env.FAKE_PI_LOG=logFile;
  try{
   const good=await probePi({command:process.execPath,args:[smartFixture],shell:false},{cwd:work,timeoutMs:15000});
   assert.deepEqual(good,{ok:true});
+  // print 模式断言：fixture 收到 @PROMPT.md 且文件存在；探测（tools=false）带 --no-tools
+  const calls=await readPiLog(logFile);
+  assert.equal(calls.length,1);assert.equal(calls[0].promptFile,'@PROMPT.md');assert.equal(calls[0].promptExists,true);assert.equal(calls[0].noTools,true,'探测应禁用工具');
+  assert.equal(await fs.readFile(path.join(work,'PROMPT.md'),'utf8'),'请只回复 ok','prompt 应写入工作目录 PROMPT.md');
   const bad=await probePi({command:process.execPath,args:[brokenFixture],shell:false},{cwd:work,timeoutMs:15000});
   assert.equal(bad.ok,false);assert.match(bad.error,/provider/);assert.ok(bad.error.length<=300);
- }finally{await fs.rm(work,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
+ }finally{delete process.env.FAKE_PI_LOG;await fs.rm(work,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 });
 // 端到端 HTTP 助手
 async function call(base,url,data,cookie){const r=await fetch(base+'/api/'+url,{method:data===undefined?'GET':'POST',headers:{...(cookie?{cookie}:{}),...(data===undefined||data instanceof FormData?{}:{'Content-Type':'application/json'})},body:data===undefined?undefined:data instanceof FormData?data:JSON.stringify(data)});const type=r.headers.get('content-type');const setCookie=r.headers.getSetCookie?.()[0];return {status:r.status,data:type?.includes('json')?await r.json():await r.arrayBuffer(),cookie:setCookie?setCookie.split(';')[0]:undefined};}
@@ -70,6 +77,7 @@ const testEnv={ADMIN_EMAILS:'admin@example.com',LOCAL_DEV:'1',DEV_EMAIL_CODE:'12
 test('端到端：进程内 runner 完成 draft 与 grade 任务；SMTP 未配置时 mail 离线且不投递',async()=>{
  const bin=await makeFakePiBin(smartFixture);
  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'course-loop-e2e-'));
+ const logFile=path.join(dataDir,'pi-calls.log');process.env.FAKE_PI_LOG=logFile;
  const app=await startServer({port:0,host:'127.0.0.1',dataDir,env:testEnv,pathEnv:bin+path.delimiter+process.env.PATH,pollIntervalMs:200,scanIntervalMs:0,probeTimeoutMs:15000,clientDir:path.join(dataDir,'no-client'),serverEntry:null,log:()=>{}});
  try{
   const base=`http://127.0.0.1:${app.port}`;
@@ -101,9 +109,15 @@ test('端到端：进程内 runner 完成 draft 与 grade 任务；SMTP 未配�
   const mails=app.sqlite.prepare("SELECT status FROM jobs WHERE kind='email'").all();
   assert.ok(mails.length>0,'登录验证码应产生邮件任务');
   assert.ok(mails.every(m=>m.status==='queued'),'SMTP 未配置时邮件任务不得投递');
- }finally{await app.close();await fs.rm(bin,{recursive:true,force:true,maxRetries:10,retryDelay:200});await fs.rm(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
+  // print 模式断言：任务调用带 @PROMPT.md 且文件存在；探测带 --no-tools，任务调用带工具
+  const calls=await readPiLog(logFile);
+  assert.ok(calls.length>=3,'探测 + draft + grade 至少三次调用');
+  assert.ok(calls.every(c=>c.promptFile==='@PROMPT.md'&&c.promptExists),'每次调用都应收到存在的 @PROMPT.md');
+  assert.ok(calls.some(c=>c.noTools),'探测调用应带 --no-tools');
+  assert.ok(calls.some(c=>!c.noTools),'任务调用应保留工具');
+ }finally{delete process.env.FAKE_PI_LOG;await app.close();await fs.rm(bin,{recursive:true,force:true,maxRetries:10,retryDelay:200});await fs.rm(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 },{timeout:120000});
-test('PATH 无 pi-acp：health.acp 为 false 且 acpFound 为 false（界面据此显示未连接）',async()=>{
+test('PATH 无 pi：health.acp 为 false 且 acpFound 为 false（界面据此显示未连接）',async()=>{
  const emptyBin=await fs.mkdtemp(path.join(os.tmpdir(),'pi-none-'));
  const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'course-loop-nopi-'));
  const app=await startServer({port:0,host:'127.0.0.1',dataDir,env:testEnv,pathEnv:emptyBin,pollIntervalMs:200,scanIntervalMs:0,probeTimeoutMs:15000,clientDir:path.join(dataDir,'no-client'),serverEntry:null,log:()=>{}});
@@ -113,7 +127,7 @@ test('PATH 无 pi-acp：health.acp 为 false 且 acpFound 为 false（界面据�
   const s=(await call(base,'state',undefined,admin.cookie)).data;
   assert.equal(s.health.acp,false);assert.equal(s.health.online,false);
   assert.equal(s.health.acpFound,false);assert.equal(s.health.acpError,null);
-  assert.match(app.piState.error,/未在本机 PATH 找到 pi-acp/);
+  assert.match(app.piState.error,/未在本机 PATH 找到 pi/);
   assert.ok(app.piState.spec===null);
  }finally{await app.close();await fs.rm(emptyBin,{recursive:true,force:true,maxRetries:10,retryDelay:200});await fs.rm(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 },{timeout:60000});

@@ -1845,7 +1845,7 @@ export default function Workbench() {
                     !s.health.acpError &&
                     s.health.acpFound === false && (
                       <div className="feedback">
-                        未在本机 PATH 找到 pi-acp，请先安装
+                        未在本机 PATH 找到 pi，请先安装
                         Pi；安装后服务器会在一分钟内自动识别。
                       </div>
                     )}
