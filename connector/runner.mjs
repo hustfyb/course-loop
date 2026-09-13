@@ -17,17 +17,17 @@ export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=
  if(!baseUrl)throw Error('runner 缺少 baseUrl');if(!token)throw Error('runner 缺少 token');if(!workRoot)throw Error('runner 缺少 workRoot');
  const accessHeaders=siteAccessToken?{'OAI-Sites-Authorization':'Bearer '+siteAccessToken}:{};
  const dynamicAcp=typeof acp==='function';const getAcp=dynamicAcp?acp:()=>acp;
- let stopped=false;let current=null;
+ let stopped=false;const active=new Set();
  async function request(endpoint,body,lease){const response=await fetch(baseUrl+'/api/connector/'+endpoint,{method:'POST',headers:{...accessHeaders,'Content-Type':'application/json','Authorization':'Bearer '+token,...(lease?{'x-job-lease':lease}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});const r=await response.json();if(!response.ok)throw Error(r.error||'网站请求失败');return r;}
- async function processLoop(kind){while(!stopped){try{const {job}=await request('poll',{acp:kind==='acp'&&!!getAcp(),mail:kind==='mail'&&!!sendMail});if(!job){await new Promise(r=>setTimeout(r,pollIntervalMs));continue;}let beat;try{
+ async function processLoop(kind){let current=null;while(!stopped){try{const {job}=await request('poll',{acp:kind==='acp'&&!!getAcp(),mail:kind==='mail'&&!!sendMail});if(!job){await new Promise(r=>setTimeout(r,pollIntervalMs));continue;}let beat;try{
   log('处理任务',job.id,job.kind);let result;
   if(job.kind==='email'){if(!sendMail)throw Error('邮件发送未配置');await sendMail({to:job.payload.to,subject:job.payload.subject,text:job.payload.text});result={delivered:true};}
   else{const spec=getAcp();if(!spec)throw Error('Pi 暂不可用');const work=path.join(workRoot,job.id+'-'+job.lease);await fs.mkdir(work,{recursive:true});const docs=[];for(const file of job.files||[]){const r=await fetch(baseUrl+`/api/connector/file/${job.id}/${file.id}`,{headers:{...accessHeaders,Authorization:'Bearer '+token,'x-job-lease':job.lease},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('无法下载任务附件');const bytes=await r.arrayBuffer();if(bytes.byteLength>20*1024*1024)throw Error('附件超过大小限制');const fname=file.name.replace(/[\\/:\x00-\x1f]/g,'_');const dir=path.join(work,file.id);await fs.mkdir(dir,{recursive:true});const filePath=path.join(dir,fname);await fs.writeFile(filePath,Buffer.from(bytes));const content=await extractDocument(fname,bytes,dir);docs.push(`文件 ${file.name}：${filePath}\n${content}`);}
-   current=new AcpClient(spec.command,spec.args||[],{cwd:work,timeout:taskTimeoutMs,shell:!!spec.shell});beat=setInterval(()=>request('heartbeat/'+job.id,{},job.lease).catch(()=>{current?.cancel();current?.close()}),30000);const output=await current.run(work,promptFor(job,docs));try{result=JSON.parse(output.trim());}catch{throw Error('Agent 未返回合法 JSON；网站保留失败任务，可修正配置后重试');}finally{current.close();current=null;}}
+   current=new AcpClient(spec.command,spec.args||[],{cwd:work,timeout:taskTimeoutMs,shell:!!spec.shell});active.add(current);beat=setInterval(()=>request('heartbeat/'+job.id,{},job.lease).catch(()=>{current?.cancel();current?.close()}),30000);const output=await current.run(work,promptFor(job,docs));try{result=JSON.parse(output.trim());}catch{throw Error('Agent 未返回合法 JSON；网站保留失败任务，可修正配置后重试');}finally{current.close();active.delete(current);current=null;}}
   await request('finish/'+job.id,{result},job.lease);log('任务完成',job.id);
- }catch(e){current?.close();current=null;await request('finish/'+job.id,{error:String(e.message).slice(0,1500)},job.lease).catch(()=>{});errorLog('任务失败',job.id,String(e.message).slice(0,180));}finally{clearInterval(beat);}
+ }catch(e){if(current){active.delete(current);current.close();current=null;}await request('finish/'+job.id,{error:String(e.message).slice(0,1500)},job.lease).catch(()=>{});errorLog('任务失败',job.id,String(e.message).slice(0,180));}finally{clearInterval(beat);}
  }catch(e){errorLog('连接暂不可用：',String(e.message).slice(0,180));await new Promise(r=>setTimeout(r,10000));}}
  }
  const done=(async()=>{await fs.mkdir(workRoot,{recursive:true});const loops=[];if(dynamicAcp||getAcp())loops.push(processLoop('acp'));if(sendMail)loops.push(processLoop('mail'));await Promise.all(loops);})();
- return {stop(){stopped=true;current?.cancel();current?.close();},done};
+ return {stop(){stopped=true;for(const c of active){c.cancel();c.close();}active.clear();},done};
 }

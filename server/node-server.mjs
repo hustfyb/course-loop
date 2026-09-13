@@ -56,6 +56,7 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  const piState={spec:null,error:null};
  async function scan(){const found=await findPi({pathEnv:pathEnv??env.PATH,explicit:env.PI_COMMAND});
   if(!found){piState.spec=null;piState.error='未在本机 PATH 找到 pi-acp，请先安装 Pi';updateHealth({acpFound:false,acpError:null});return;}
+  const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // pi-acp 适配器需要在同目录找到 pi
   const probe=await probePi(found,{cwd:workRoot,timeoutMs:probeTimeoutMs});
   if(probe.ok){piState.spec=found;piState.error=null;updateHealth({acpFound:true,acpAt:Date.now(),acpError:null});}
   else{piState.spec=null;piState.error=probe.error;updateHealth({acpFound:true,acpError:probe.error});}}
