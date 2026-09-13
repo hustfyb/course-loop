@@ -215,6 +215,7 @@ export default function Workbench() {
   const [assistLocal, setAssistLocal] = useState<Any[]>([]);
   const assistScrollRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   const refresh = useCallback(async () => {
     try {
       const key = s.user?.role === 'admin' ? 'course' : 'class';
@@ -321,6 +322,22 @@ export default function Workbench() {
         setAttachments((a) => [...a, f]);
       }
       setNotice('文件已上传，可随消息或作业一起提交。');
+    });
+  }
+  async function importCourse(files: File[]) {
+    if (!files.length) return;
+    let raw: Any;
+    try {
+      const parsed = JSON.parse(await files[0].text());
+      raw = parsed?.course || parsed;
+    } catch {
+      setError('文件不是有效的 JSON');
+      return;
+    }
+    await act(async () => {
+      const r = await call('course-import', { course: raw });
+      setSelected(r.id);
+      setNotice('课程已导入，请检查内容后发布');
     });
   }
   const go = (id: string) => {
@@ -787,20 +804,30 @@ export default function Workbench() {
                         <span>
                           {s.selected === c.id ? '正在编排' : '点击编排内容'}
                         </span>
-                        <button
-                          aria-label={'删除 ' + c.title}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            open('delCourse', {
-                              courseId: c.id,
-                              title: c.title,
-                              term: c.term,
-                            });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                          删除
-                        </button>
+                        <span className="button-row">
+                          <a
+                            className="text-action"
+                            href={'/api/course-export?course=' + c.id}
+                            download
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            导出
+                          </a>
+                          <button
+                            aria-label={'删除 ' + c.title}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              open('delCourse', {
+                                courseId: c.id,
+                                title: c.title,
+                                term: c.term,
+                              });
+                            }}
+                          >
+                            <Trash2 size={14} />
+                            删除
+                          </button>
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -814,8 +841,25 @@ export default function Workbench() {
                     <h2>
                       <Plus size={17} /> 新建课程
                     </h2>
-                    <p>预置四次实验，之后用对话编排内容。</p>
+                    <p>空白起步或复制当前课程，之后用对话编排内容。</p>
                   </button>
+                  <button
+                    className="lab-card panel"
+                    onClick={() => importRef.current?.click()}
+                  >
+                    <div className="lab-top">
+                      <span className="tag">JSON</span>
+                    </div>
+                    <h2>
+                      <Download size={17} /> 导入课程
+                    </h2>
+                    <p>从导出的课程 JSON 文件恢复完整实验内容。</p>
+                  </button>
+                  <NativeFileInput
+                    inputRef={importRef}
+                    onPick={(f: File[]) => importCourse(f)}
+                    accept=".json,application/json"
+                  />
                 </div>
               </section>
               <div className="studio-grid">
