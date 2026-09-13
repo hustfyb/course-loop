@@ -160,6 +160,33 @@ function Empty({ title, body, children }: Any) {
     </div>
   );
 }
+// React 19 的 onChange 对文件选择不可靠（合成事件不派发），改用原生 change 监听。
+function NativeFileInput({ inputRef, onPick, accept, visible }: Any) {
+  const innerRef = useRef<HTMLInputElement>(null);
+  const ref = inputRef || innerRef;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const handler = () => {
+      // FileList 是活的：先复制出来再清空输入框，否则异步上传时读到的是空列表
+      const files = el.files ? Array.from(el.files) : [];
+      if (files.length) onPick(files);
+      el.value = '';
+    };
+    el.addEventListener('change', handler);
+    return () => el.removeEventListener('change', handler);
+  });
+  return (
+    <input
+      ref={ref}
+      type="file"
+      multiple
+      accept={accept}
+      hidden={!visible}
+      aria-label={visible ? '上传作业文件' : undefined}
+    />
+  );
+}
 export default function Workbench() {
   const [s, setS] = useState<Any>({ user: null, courses: [], classes: [] });
   const [loaded, setLoaded] = useState(false);
@@ -848,16 +875,10 @@ export default function Workbench() {
                         <Paperclip size={17} />
                         添加文档
                       </Button>
-                      <input
-                        hidden
-                        ref={uploadRef}
-                        type="file"
-                        multiple
+                      <NativeFileInput
+                        inputRef={uploadRef}
+                        onPick={(f: FileList) => upload(f)}
                         accept=".md,.txt,.docx,.pdf"
-                        onChange={(e) => {
-                          upload(e.target.files);
-                          e.target.value = '';
-                        }}
                       />
                       <button
                         className="send"
@@ -1233,14 +1254,9 @@ export default function Workbench() {
                                 {team.name} · 上传 ZIP、Markdown
                                 或相关证据。单个文件不超过 20 MB。
                               </p>
-                              <input
-                                aria-label="上传作业文件"
-                                type="file"
-                                multiple
-                                onChange={(e) => {
-                                  upload(e.target.files, true);
-                                  e.target.value = '';
-                                }}
+                              <NativeFileInput
+                                visible
+                                onPick={(f: FileList) => upload(f, true)}
                               />
                               <div className="attachment-list">
                                 {attachments.map((f) => (
