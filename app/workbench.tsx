@@ -2083,7 +2083,9 @@ export default function Workbench() {
               </label>
               {s.local && (
                 <p className="muted">
-                  当前为本地开发环境，使用部署者配置的开发验证码。
+                  当前为本地开发环境，验证码固定为{' '}
+                  <strong className="dev-code">{s.devCode || '未配置'}</strong>
+                  ，直接输入即可登录。
                 </p>
               )}
               <Button

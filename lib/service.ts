@@ -38,7 +38,7 @@ export async function api(req:Request,env:Platform){
   return {selected:k.id,course:{id:c.id,title:c.title,term:c.term},release:release?{id:release.id,revision:release.revision,created:release.created}:null,draft:release?parse(release.content):null,teams:ts,myTeam:tv?null:my?.id,invites:inv,submissions:subs,files:fs,appeals:tv?await all('SELECT appeals.* FROM appeals JOIN submissions ON submissions.id=appeals.submissionId WHERE submissions.classId=?',k.id):await all('SELECT * FROM appeals WHERE userId=?',u.id),students:tv?await all('SELECT users.id,users.name,users.email,users.studentNo,members.teamId FROM enrollments JOIN users ON users.id=enrollments.userId LEFT JOIN members ON members.userId=users.id AND members.classId=enrollments.classId WHERE enrollments.classId=?',k.id):[]};
  }
  async function snapshot(u:any){
-  const health=parse((await one('SELECT value FROM settings WHERE key=\'connector_health\''))?.value,{});const base={user:u,local,health:{online:now()-Math.max(health.acpAt||0,health.mailAt||0)<90000,acp:now()-(health.acpAt||0)<90000,mail:now()-(health.mailAt||0)<90000,acpFound:health.acpFound??null,acpError:health.acpError??null,mailError:health.mailError??null},pendingInvites:await all('SELECT invites.*,teams.name as teamName FROM invites JOIN teams ON teams.id=invites.teamId WHERE invites.email=? AND invites.status=\'pending\'',u.email)};
+  const health=parse((await one('SELECT value FROM settings WHERE key=\'connector_health\''))?.value,{});const base={user:u,local,devCode:local?(env.DEV_EMAIL_CODE||''):'',health:{online:now()-Math.max(health.acpAt||0,health.mailAt||0)<90000,acp:now()-(health.acpAt||0)<90000,mail:now()-(health.mailAt||0)<90000,acpFound:health.acpFound??null,acpError:health.acpError??null,mailError:health.mailError??null},pendingInvites:await all('SELECT invites.*,teams.name as teamName FROM invites JOIN teams ON teams.id=invites.teamId WHERE invites.email=? AND invites.status=\'pending\'',u.email)};
   if(u.role==='admin'){
    const cs=await all('SELECT courses.*,(SELECT COUNT(*) FROM classes WHERE classes.courseId=courses.id) AS classCount FROM courses WHERE owner=? ORDER BY created',u.id);const cid=url.searchParams.get('course')||cs[0]?.id;const c=cs.find((x:any)=>x.id===cid);let extra:any={};
    if(c){const release=c.publishedId?await one('SELECT * FROM releases WHERE id=?',c.publishedId):null;
@@ -87,7 +87,7 @@ export async function api(req:Request,env:Platform){
    }return reply({error:'连接器操作不存在'},404);
   }
   const u=await user();
-  if(path==='state')return reply(u?await snapshot(u):{user:null,courses:[],classes:[],local});
+  if(path==='state')return reply(u?await snapshot(u):{user:null,courses:[],classes:[],local,devCode:local?(env.DEV_EMAIL_CODE||''):''});
   need(u,'请先登录',401);
   if(path==='auth/profile'&&method==='POST'){const b:any=await req.json();need(u.role==='pending','身份信息已完善',409);need(b.role==='teacher'||b.role==='student','身份类型无效',400);const name=text(b.name,80);const sn=b.role==='student'?text(b.studentNo,40):'';await run('UPDATE users SET role=?,name=?,studentNo=? WHERE id=?',b.role,name,sn,u.id);return reply({user:{...u,role:b.role,name,studentNo:sn}});}
   need(u.role!=='pending','请先完善个人信息',403);
