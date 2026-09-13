@@ -25,10 +25,11 @@ async function readPiLog(logFile){return (await fs.readFile(logFile,'utf8')).tri
 async function until(fn,timeoutMs=90000,step=250){const end=Date.now()+timeoutMs;let last;while(Date.now()<end){last=await fn();if(last)return last;await new Promise(r=>setTimeout(r,step));}throw Error('等待超时：'+JSON.stringify(last));}
 test('DB 封装 + 幂等迁移：连跑两次不报错，batch 事务可回滚',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'course-loop-db-'));
+ const expectedMigrations=(await fs.readdir(drizzleDir)).filter(f=>f.endsWith('.sql')).length;
+ const sqlite=createDb(dir);
  try{
-  const sqlite=createDb(dir);
   await migrate(sqlite,drizzleDir);await migrate(sqlite,drizzleDir);
-  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM __migrations').get().n,3);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM __migrations').get().n,expectedMigrations);
   const db=wrapD1(sqlite);
   await db.prepare("INSERT INTO settings VALUES('k','v') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run();
   assert.equal((await db.prepare("SELECT value FROM settings WHERE key=?").bind('k').first()).value,'v');
@@ -36,8 +37,7 @@ test('DB 封装 + 幂等迁移：连跑两次不报错，batch 事务可回滚',
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM settings").first()).n,3);
   await assert.rejects(()=>db.batch([db.prepare("INSERT INTO settings VALUES('b3','z')").bind(),db.prepare("INSERT INTO settings VALUES('k','dupe')").bind()]));
   assert.equal(await db.prepare("SELECT value FROM settings WHERE key='b3'").first(),null,'失败 batch 应整体回滚');
-  sqlite.close();
- }finally{await fs.rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
+ }finally{sqlite.close();await fs.rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 });
 test('FILES 本地目录：put/get/delete',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'course-loop-files-'));

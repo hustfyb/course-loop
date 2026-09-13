@@ -132,6 +132,12 @@ const defaultView: Record<string, string> = {
   teacher: 'classes',
   student: 'courses',
 };
+const jobKindNames: Record<string, string> = {
+  draft: '课程草案分析',
+  grade: '实验评分',
+  answer: '个人核验',
+  email: '邮件投递',
+};
 function Status({ value }: { value: string }) {
   return (
     <span
@@ -1930,8 +1936,8 @@ export default function Workbench() {
                   </div>
                   <h2>邮箱注册与邀请</h2>
                   <p>
-                    连接器通过你的 SMTP 服务发送登录验证码和 Team
-                    邀请。未连接时，网站会明确提示，验证码不会假装已发送。
+                    服务器通过配置的 SMTP 服务发送登录验证码和 Team
+                    邀请。未配置时，网站会明确提示，验证码不会假装已发送。
                   </p>
                   <Status
                     value={
@@ -1944,6 +1950,54 @@ export default function Workbench() {
                   <p className="muted">
                     教师注册时自选身份；课程管理员由部署时配置的管理员邮箱决定。
                   </p>
+                </section>
+                <section className="panel data-panel">
+                  <h2>小课工作日志</h2>
+                  {!s.jobLog?.length ? (
+                    <p className="muted py-4">
+                      还没有任务记录。与小课对话或学生提交作业后，任务会出现在这里。
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>时间</TableHead>
+                          <TableHead>任务</TableHead>
+                          <TableHead>状态</TableHead>
+                          <TableHead>耗时</TableHead>
+                          <TableHead>说明</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {s.jobLog.map((j: Any) => (
+                          <TableRow key={j.id}>
+                            <TableCell>{fmt(j.created)}</TableCell>
+                            <TableCell>
+                              {jobKindNames[j.kind] || j.kind}
+                            </TableCell>
+                            <TableCell>
+                              <Status value={j.status} />
+                            </TableCell>
+                            <TableCell>
+                              {j.finished
+                                ? Math.max(
+                                    1,
+                                    Math.round((j.finished - j.created) / 1000),
+                                  ) + ' 秒'
+                                : '—'}
+                            </TableCell>
+                            <TableCell className="muted">
+                              {j.error
+                                ? j.error.slice(0, 80)
+                                : j.attempts > 1
+                                  ? `第 ${j.attempts} 次尝试`
+                                  : ''}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
                 </section>
               </div>
             ) : teacher ? (
