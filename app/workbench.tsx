@@ -337,7 +337,7 @@ export default function Workbench() {
     studio: [
       'COURSE STUDIO',
       '把课程想法，变成学习任务。',
-      '交给 Agent 一份文档，在对话中完善，在发布前确认。',
+      '交给小课一份文档，在对话中完善，在发布前确认。',
     ],
     courses: [
       'EXPERIMENT LIBRARY',
@@ -371,7 +371,7 @@ export default function Workbench() {
     settings: admin
       ? [
           'WORKSPACE CONNECTIONS',
-          '把你的 Agent 接入工作台。',
+          '让小课在你的机器上工作。',
           '网站维护课程与成绩，Pi 负责文档理解和实验核验。',
         ]
       : [
@@ -729,7 +729,7 @@ export default function Workbench() {
                   <div className="panel-title">
                     <span>
                       <Sparkles size={18} />
-                      与课程 Agent 协作
+                      与小课协作
                     </span>
                     <span className="tag">
                       {course ? `草案 v${course.revision}` : '草案阶段'}
@@ -741,7 +741,7 @@ export default function Workbench() {
                         {s.messages.map((m: Any) => (
                           <article className={'message ' + m.role} key={m.id}>
                             <div className="message-label">
-                              {m.role === 'user' ? '你' : '课程 Agent'}
+                              {m.role === 'user' ? '你' : '小课'}
                               <small>{fmt(m.created)}</small>
                             </div>
                             <p>{m.content}</p>
@@ -768,7 +768,7 @@ export default function Workbench() {
                         </div>
                         <h2>从你已有的材料开始</h2>
                         <p>
-                          上传教学大纲、实验指导或评分文档。Agent
+                          上传教学大纲、实验指导或评分文档。小课
                           会整理任务和评分项，把需要你决定的地方留在这里。
                         </p>
                         <div className="starter-prompts">
@@ -833,7 +833,7 @@ export default function Workbench() {
                       <CircleHelp size={16} />
                       <span>
                         {s.health?.online
-                          ? '有歧义时，Agent 会在这里追问。'
+                          ? '有歧义时，小课会在这里追问。'
                           : '连接 Pi 后开始分析。四次实验已预置，可先预览和发布。'}
                       </span>
                     </div>
@@ -860,7 +860,7 @@ export default function Workbench() {
                       </div>
                     )}
                     <textarea
-                      aria-label="给课程 Agent 的消息"
+                      aria-label="给小课的消息"
                       placeholder="描述你的想法，或附上一份文档…"
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
@@ -882,7 +882,7 @@ export default function Workbench() {
                       />
                       <button
                         className="send"
-                        aria-label="发送给 Agent"
+                        aria-label="发送给小课"
                         disabled={
                           busy || (!message.trim() && !attachments.length)
                         }
@@ -1855,7 +1855,7 @@ export default function Workbench() {
                   <div className="agent-symbol">
                     <Sparkles size={23} />
                   </div>
-                  <h2>Pi Agent 连接器</h2>
+                  <h2>小课的运行引擎（Pi）</h2>
                   <p>
                     服务器启动时会自动在本机 PATH 中查找并验证
                     Pi，无需再手动配置连接器。找不到时会显示未连接；找到但不可用（如未配置
@@ -2221,7 +2221,7 @@ export default function Workbench() {
               <p className="muted">
                 {course
                   ? '复制当前课程的实验内容，不复制课堂和提交记录。'
-                  : '预置四次实验，后续可上传文档与 Agent 对话修改。'}
+                  : '预置四次实验，后续可上传文档与小课对话修改。'}
               </p>
               <Button
                 disabled={busy}
@@ -2570,7 +2570,7 @@ export default function Workbench() {
                 </label>
               ))}
               <p className="muted">
-                调整将保留原始评分和本次理由；默认保留 Agent 给出的证据。
+                调整将保留原始评分和本次理由；默认保留小课给出的证据。
               </p>
               <Button
                 disabled={busy}
