@@ -115,3 +115,11 @@ test('course deletion: empty course only, admin only, cascades course-level data
  // 空课程可删：先建一门新课并上传课程素材
  const cid2=(await req(x,'courses',{term:'误建学期'},a.cookie)).data.id;const f=new FormData();f.set('courseId',cid2);f.set('file',new File(['m'],'大纲.md'));const up=await req(x,'upload',f,a.cookie);assert.equal(up.status,200);assert.equal(x.blobs.size,1);
  const del=await req(x,'course-delete',{courseId:cid2},a.cookie);assert.equal(del.status,200,JSON.stringify(del.data));assert.equal(x.blobs.size,0);assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM courses WHERE id=?').get(cid2).n,0);assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM files WHERE courseId=?').get(cid2).n,0);assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM courses WHERE id=?').get(cid).n,1);});
+test('file deletion: admin deletes course material; class files protected; others forbidden',async()=>{const x=await init();const {a,t,cid,kid}=await classroom(x);
+ const f=new FormData();f.set('courseId',cid);f.set('file',new File(['m'],'素材.md'));const up=await req(x,'upload',f,a.cookie);assert.equal(up.status,200);
+ // 教师/学生不能删课程素材
+ assert.equal((await req(x,'file-delete',{id:up.data.id},t.cookie)).status,403);
+ // 课堂文件（学生作业）保护：学生上传课堂文件后 admin 也不能删
+ const s=await login(x,'sf@example.com');await req(x,'join',{code:(await req(x,'state',undefined,t.cookie)).data.classes[0].joinCode},s.cookie);const st=(await req(x,'state',undefined,s.cookie)).data;const tid=st.teams.length?st.myTeam:(await req(x,'teams',{classId:kid,name:'组'},s.cookie)).data.id;const ff=new FormData();ff.set('classId',kid);ff.set('teamId',tid);ff.set('file',new File(['x'],'作业.md'));const upf=await req(x,'upload',ff,s.cookie);assert.equal(upf.status,200,JSON.stringify(upf.data));assert.equal((await req(x,'file-delete',{id:upf.data.id},a.cookie)).status,400);
+ // 管理员删除课程素材：记录与对象都消失，下载 404
+ assert.equal((await req(x,'file-delete',{id:up.data.id},a.cookie)).status,200);assert.equal(x.blobs.size,1);assert.equal((await req(x,'files/'+up.data.id,undefined,a.cookie)).status,404);});

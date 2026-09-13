@@ -1123,6 +1123,19 @@ export default function Workbench() {
                                   : '共享给学生'}
                               </Button>
                             )}
+                            {admin && (
+                              <button
+                                className="text-action danger"
+                                onClick={() =>
+                                  open('delFile', {
+                                    fileId: f.id,
+                                    name: f.name,
+                                  })
+                                }
+                              >
+                                删除
+                              </button>
+                            )}
                           </div>
                         ))}
                     </section>
@@ -2022,6 +2035,7 @@ export default function Workbench() {
                     profile: '完善个人信息',
                     newCourse: '新建课程',
                     delCourse: '删除课程',
+                    delFile: '删除课程素材',
                     newClass: '开设课堂',
                     join: '加入课堂',
                     createTeam: '创建 Team',
@@ -2406,6 +2420,25 @@ export default function Workbench() {
                     setModal(null);
                     setNotice('课程已删除');
                   })
+                }
+              >
+                确认删除
+              </Button>
+            </>
+          )}
+          {modal?.type === 'delFile' && (
+            <>
+              <p>
+                将删除课程素材 <strong>{modal.name}</strong>
+                ，下载链接将失效，不可恢复。
+              </p>
+              <p className="muted">
+                小组与提交里的作业文件属于教学记录，不在此处删除。
+              </p>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  mutation('file-delete', { id: modal.fileId }, '文件已删除')
                 }
               >
                 确认删除
