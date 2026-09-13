@@ -88,7 +88,9 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  }
  const notBuilt=(res)=>{res.writeHead(503,{'Content-Type':'text/plain; charset=utf-8'});res.end('前端尚未构建：请先运行 npm run build 生成 dist/client');};
  const server=http.createServer(async(req,res)=>{try{
-  const url=new URL(req.url||'/','http://'+(req.headers.host||'127.0.0.1'));
+  // 反代/隧道场景：优先采用代理转发的协议与主机，保证同源校验、邮件链接与 Secure Cookie 正确
+  const fwd=(h)=>String(req.headers[h]||'').split(',')[0].trim();
+  const url=new URL(req.url||'/',(fwd('x-forwarded-proto')||'http')+'://'+(fwd('x-forwarded-host')||req.headers.host||'127.0.0.1'));
   if(url.pathname==='/api'||url.pathname.startsWith('/api/')){await sendWeb(await api(makeRequest(req,url),platform),res);return;}
   if(['GET','HEAD'].includes(req.method||'')&&await tryServeFile(url.pathname,res))return;
   if(!existsSync(clientDir)){notBuilt(res);return;}
