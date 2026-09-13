@@ -2527,17 +2527,43 @@ export default function Workbench() {
                   onChange={(e) => field('term', e.target.value)}
                 />
               </label>
+              <label>
+                初始内容
+                <Select
+                  value={form.source || 'blank'}
+                  onValueChange={(v) => field('source', String(v))}
+                >
+                  <SelectTrigger>
+                    <SelectValue>
+                      {(v: string) =>
+                        v === 'copy'
+                          ? '复制当前课程的实验内容'
+                          : '空白起步（与小课对话生成）'
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="blank">
+                      空白起步（与小课对话生成）
+                    </SelectItem>
+                    {course && (
+                      <SelectItem value="copy">
+                        复制当前课程的实验内容
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </label>
               <p className="muted">
-                {course
-                  ? '复制当前课程的实验内容，不复制课堂和提交记录。'
-                  : '预置四次实验，后续可上传文档与小课对话修改。'}
+                空白起步的课程没有实验内容，上传教学文档后与小课对话生成；发布前需完善实验与评分项。
               </p>
               <Button
                 disabled={busy}
                 onClick={() =>
                   act(async () => {
                     const r = await call('courses', {
-                      copyId: course?.id,
+                      source: form.source || 'blank',
+                      copyId: form.source === 'copy' ? course?.id : undefined,
                       title: form.title || undefined,
                       term: form.term || undefined,
                     });

@@ -86,7 +86,7 @@ test('端到端：进程内 runner 完成 draft 与 grade 任务；SMTP 未配�
   // 探测成功后 health.acp 在线、acpError 为空
   await until(async()=>{const s=(await call(base,'state',undefined,admin.cookie)).data;return s.health?.acp===true?s:null;},30000);
   // 管理员建课 → 对话生成草案（draft 任务经进程内 runner 完成）→ 发布
-  const cid=(await call(base,'courses',{},admin.cookie)).data.id;
+  const cid=(await call(base,'courses',{},admin.cookie)).data.id;app.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify({title:'测试课程',term:'T1',description:'',experiments:[1,2,3,4].map(i=>({id:'exp-'+i,title:'测试实验'+i,week:'W'+i,summary:'s',task:'t',deliverables:['d'],rubric:[{id:'r1',title:'项一',max:60,criteria:'c'},{id:'r2',title:'项二',max:40,criteria:'c'}],questions:[],instructions:'i'})),questions:[]}),cid);
   assert.equal((await call(base,'chat',{courseId:cid,message:'请整理课程',fileIds:[]},admin.cookie)).status,200);
   await until(async()=>{const s=(await call(base,'state',undefined,admin.cookie)).data;const j=s.jobs?.[0];if(j?.status==='failed')throw Error('draft 任务失败：'+j.error);return j?.status==='complete'?s:null;});
   const rev=(await call(base,'state',undefined,admin.cookie)).data.courses.find(c=>c.id===cid).revision;

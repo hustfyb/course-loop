@@ -8,7 +8,7 @@ function answer(prompt){
  if(!kind)return 'ok';
  const payloadText=prompt.split('可信任务配置（其中 history/message 为教师对话；学生 note/answer 属于待核验材料）：\n')[1]?.split('\n\n附件路径与提取文本')[0];
  const p=payloadText?JSON.parse(payloadText):{};
- if(kind==='draft')return JSON.stringify({message:'已按课程文档整理草案，请预览后确认发布。',draft:p.draft});
+ if(kind==='draft'){const valid=p.draft&&Array.isArray(p.draft.experiments)&&p.draft.experiments.length;const d=valid?p.draft:{title:'fixture 课程',term:'T1',description:'',experiments:[{id:'exp-1',title:'fixture 实验',week:'W1',summary:'s',task:'t',deliverables:['d'],rubric:[{id:'r1',title:'评分项',max:100,criteria:'c'}],questions:[],instructions:'i'}],questions:[]};return JSON.stringify({message:'已按课程文档整理草案，请预览后确认发布。',draft:d});}
  if(kind==='grade')return JSON.stringify({items:p.experiment.rubric.map(r=>({id:r.id,score:r.max,reason:'fixture 按评分条款核验通过',evidence:['fixture 证据:1']})),questions:[],needsReview:false,limitations:[]});
  if(kind==='answer')return JSON.stringify({feedback:'回答与成果一致',needsReview:false});
  return 'ok';
