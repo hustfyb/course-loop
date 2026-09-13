@@ -137,3 +137,18 @@ test('PATH 无 pi：health.acp 为 false 且 acpFound 为 false（界面据此�
   const noPi=await call(base,'assist',{message:'怎么用？'},admin.cookie);assert.equal(noPi.status,503);assert.match(noPi.data.error,/小课暂时不可用/);
  }finally{await app.close();await fs.rm(emptyBin,{recursive:true,force:true,maxRetries:10,retryDelay:200});await fs.rm(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 },{timeout:60000});
+test('PI_ARGS：追加参数透传到所有 pi 调用',async()=>{
+ const bin=await makeFakePiBin(smartFixture);
+ const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'course-loop-piargs-'));
+ const logFile=path.join(dataDir,'pi-calls.log');process.env.FAKE_PI_LOG=logFile;
+ const env={...testEnv,PI_ARGS:'--provider carbit --model qwen38-nvfp4'};
+ const app=await startServer({port:0,host:'127.0.0.1',dataDir,env,pathEnv:bin+path.delimiter+process.env.PATH,pollIntervalMs:200,scanIntervalMs:0,probeTimeoutMs:15000,clientDir:path.join(dataDir,'no-client'),serverEntry:null,log:()=>{}});
+ try{
+  const base=`http://127.0.0.1:${app.port}`;const admin=await login(base,'admin@example.com');
+  await until(async()=>{const s=(await call(base,'state',undefined,admin.cookie)).data;return s.health?.acp===true?s:null;},30000);
+  assert.equal((await call(base,'assist',{message:'你好'},admin.cookie)).status,200);
+  const calls=await readPiLog(logFile);
+  assert.ok(calls.length>=2,'探测 + assist 至少两次调用');
+  assert.ok(calls.every(c=>c.argv.includes('--provider')&&c.argv.includes('carbit')&&c.argv.includes('--model')&&c.argv.includes('qwen38-nvfp4')),'PI_ARGS 应透传到每次调用');
+ }finally{delete process.env.FAKE_PI_LOG;await app.close();await fs.rm(bin,{recursive:true,force:true,maxRetries:10,retryDelay:200});await fs.rm(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
+},{timeout:60000});
