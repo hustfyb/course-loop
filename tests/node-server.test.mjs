@@ -99,7 +99,7 @@ test('端到端：进程内 runner 完成 draft 与 grade 任务；SMTP 未配�
   const tid=(await call(base,'teams',{classId:k.id,name:'端到端组'},student.cookie)).data.id;
   const f=new FormData();f.set('classId',k.id);f.set('teamId',tid);f.set('file',new File(['print(1)'],'main.py'));
   const up=await call(base,'upload',f,student.cookie);assert.equal(up.status,200,JSON.stringify(up.data));
-  const sub=await call(base,'submit',{teamId:tid,experimentId:'exp-1',mode:'practice',fileIds:[up.data.id],note:'练习'},student.cookie);assert.equal(sub.status,200,JSON.stringify(sub.data));
+  const sub=await call(base,'submit',{experimentId:'exp-1',mode:'practice',fileIds:[up.data.id],note:'练习'},student.cookie);assert.equal(sub.status,200,JSON.stringify(sub.data));
   const done=await until(async()=>{const s=(await call(base,'state',undefined,student.cookie)).data;const x=s.submissions?.find(y=>y.id===sub.data.id);if(x?.status==='failed')throw Error('grade 任务失败：'+x.error);return x?.status==='complete'&&x.report?x:null;});
   assert.equal(done.report.total,100,'满分 fixture 应得总分 100');
   // 邮件：SMTP 未配置 → mail 离线、mailError 有提示、邮件任务留在队列不投递

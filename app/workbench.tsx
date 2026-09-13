@@ -266,6 +266,12 @@ export default function Workbench() {
   const cls = s.classes?.find((c: Any) => c.id === s.selected);
   const draft = s.draft || initialCourse;
   const team = s.teams?.find((t: Any) => t.id === s.myTeam);
+  const detailIndividual = detail?.grading === 'individual';
+  const formalUsed = detail
+    ? (s.submissions || []).filter(
+        (x: Any) => x.experimentId === detail.id && x.mode === 'formal',
+      ).length
+    : 0;
   const currentNav = navs.find((n) => n[0] === view) || navs[0];
   const open = (type: string, data: Any = {}) => {
     setForm({});
@@ -1360,11 +1366,20 @@ export default function Workbench() {
                         <div className="lab-top">
                           <span className="experiment-number">0{i + 1}</span>
                           <span className="tag">{e.week}</span>
+                          <span className="tag blue">
+                            {e.grading === 'individual'
+                              ? '个人判分'
+                              : '小组判分'}
+                          </span>
                         </div>
                         <h2>{e.title}</h2>
                         <p>{e.summary}</p>
                         <div className="lab-bottom">
-                          <span>Team 提交</span>
+                          <span>
+                            {e.grading === 'individual'
+                              ? '个人提交'
+                              : 'Team 提交'}
+                          </span>
                           <span>
                             {e.rubric.reduce(
                               (n: number, r: Any) => n + r.max,
@@ -1393,6 +1408,9 @@ export default function Workbench() {
                         <div>
                           <span className="tiny-label">EXPERIMENT DETAILS</span>
                           <h2>{detail.title}</h2>
+                          <span className="tag blue">
+                            {detailIndividual ? '个人判分' : '小组判分'}
+                          </span>
                         </div>
                         <button
                           aria-label="收起实验详情"
@@ -1438,16 +1456,21 @@ export default function Workbench() {
                       </div>
                       {student && (
                         <div className="submission-box">
-                          <h3>提交本组成果</h3>
-                          {!team ? (
+                          <h3>
+                            {detailIndividual ? '提交我的成果' : '提交本组成果'}
+                          </h3>
+                          {!team && !detailIndividual ? (
                             <p className="muted">
                               请先在“我的 Team”创建或加入小组。
                             </p>
                           ) : (
                             <>
                               <p className="muted">
-                                {team.name} · 上传 ZIP、Markdown
-                                或相关证据。单个文件不超过 20 MB。
+                                {detailIndividual
+                                  ? `${s.user.name} · 个人判分实验，无需小组，以你本人名义提交。`
+                                  : `${team.name} · `}
+                                上传 ZIP、Markdown 或相关证据。单个文件不超过 20
+                                MB。
                               </p>
                               <NativeFileInput
                                 visible
@@ -1484,7 +1507,6 @@ export default function Workbench() {
                                     mutation(
                                       'submit',
                                       {
-                                        teamId: team.id,
                                         experimentId: detail.id,
                                         mode: 'practice',
                                         fileIds: attachments.map((f) => f.id),
@@ -1500,15 +1522,22 @@ export default function Workbench() {
                                   disabled={
                                     busy ||
                                     !attachments.length ||
-                                    team.leader !== s.user.id
+                                    formalUsed >= 3 ||
+                                    (!detailIndividual &&
+                                      team.leader !== s.user.id)
                                   }
                                   onClick={() => open('formal')}
                                 >
-                                  确认正式提交
+                                  {detailIndividual
+                                    ? '提交我的作业'
+                                    : '确认正式提交'}
                                 </Button>
                                 <span className="muted">
-                                  正式提交由组长确认，每个实验最多{' '}
-                                  {cls?.maxFormal || 2} 个正式版本。
+                                  {formalUsed >= 3
+                                    ? '正式提交次数已用完（3 次），取最高分计成绩。'
+                                    : detailIndividual
+                                      ? `正式提交以你本人名义进行，每个实验最多 3 次（已用 ${formalUsed} 次），取最高分计成绩。`
+                                      : `正式提交由组长确认，每个实验最多 3 次（已用 ${formalUsed} 次），取最高分计成绩。`}
                                 </span>
                               </div>
                             </>
@@ -1793,7 +1822,7 @@ export default function Workbench() {
                           const rows = [
                             ['小组', '实验', '类型', '版本', '分数', '状态'],
                             ...(s.submissions || []).map((x: Any) => [
-                              x.teamName,
+                              x.teamName || x.members?.[0]?.name || '',
                               x.experimentId,
                               x.mode,
                               x.ordinal,
@@ -1854,6 +1883,9 @@ export default function Workbench() {
                                 {sub.ordinal}
                                 {sub.superseded ? ' · 已被替代' : ''}
                               </span>
+                              {sub.isBest && (
+                                <span className="tag green">最佳成绩</span>
+                              )}
                               <Status value={sub.status} />
                             </div>
                             <h2>
@@ -1862,7 +1894,8 @@ export default function Workbench() {
                               )?.title || sub.experimentId}
                             </h2>
                             <p className="muted">
-                              {sub.teamName} · {fmt(sub.created)} · 快照成员：
+                              {sub.teamName || sub.members[0]?.name} ·{' '}
+                              {fmt(sub.created)} · 快照成员：
                               {sub.members.map((m: Any) => m.name).join('、')}
                             </p>
                           </div>
@@ -2240,8 +2273,8 @@ export default function Workbench() {
                       </Button>
                     </div>
                     <p>
-                      小组最多 {cls.maxSize} 人 · 正式提交最多 {cls.maxFormal}{' '}
-                      个版本
+                      小组最多 {cls.maxSize} 人 · 每实验正式提交最多 3
+                      次，取最高分计成绩
                     </p>
                     <p>
                       截止时间：
@@ -2331,7 +2364,9 @@ export default function Workbench() {
                 : modal?.type === 'profile'
                   ? '首次登录请补充你的身份信息，之后使用邮箱验证码即可直接登录。'
                   : modal?.type === 'formal'
-                    ? '本次将固定提交文件、评分规则和当前小组成员。原版本不会被覆盖。'
+                    ? detailIndividual
+                      ? '本次将以你本人名义固定提交文件和评分规则。原版本不会被覆盖。'
+                      : '本次将固定提交文件、评分规则和当前小组成员。原版本不会被覆盖。'
                     : modal?.type === 'publish'
                       ? '学生将看到以下草案版本。之后的修改进入新版本，不改变历史提交依据。'
                       : modal?.type === 'newClass'
@@ -2764,10 +2799,12 @@ export default function Workbench() {
           {modal?.type === 'formal' && (
             <>
               <p>
-                {detail?.title} · {team?.name}
+                {detail?.title} · {detailIndividual ? s.user?.name : team?.name}
               </p>
               <p className="muted">
-                成员：{team?.members.map((m: Any) => m.name).join('、')}
+                {detailIndividual
+                  ? '将以你本人名义提交，按你的提交记录计算次数与成绩。'
+                  : `成员：${team?.members.map((m: Any) => m.name).join('、')}`}
               </p>
               <ul>
                 {attachments.map((f) => (
@@ -2780,7 +2817,6 @@ export default function Workbench() {
                   mutation(
                     'submit',
                     {
-                      teamId: team.id,
                       experimentId: detail.id,
                       mode: 'formal',
                       fileIds: attachments.map((f) => f.id),
