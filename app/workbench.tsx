@@ -30,6 +30,7 @@ import {
   Trash2,
   Link2,
   Inbox,
+  Pencil,
 } from 'lucide-react';
 import {
   SidebarProvider,
@@ -1709,14 +1710,29 @@ export default function Workbench() {
                           </div>
                         </div>
                         {t.leader === s.user.id && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => open('invite', { teamId: t.id })}
-                          >
-                            <Plus size={15} />
-                            邀请
-                          </Button>
+                          <span className="button-row">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                open('renameTeam', {
+                                  teamId: t.id,
+                                  name: t.name,
+                                })
+                              }
+                            >
+                              <Pencil size={15} />
+                              改名
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => open('invite', { teamId: t.id })}
+                            >
+                              <Plus size={15} />
+                              邀请
+                            </Button>
+                          </span>
                         )}
                       </div>
                       {t.members.map((m: Any) => (
@@ -2414,6 +2430,7 @@ export default function Workbench() {
                     newClass: '开设课堂',
                     join: '加入课堂',
                     createTeam: '创建 Team',
+                    renameTeam: '修改 Team 名称',
                     invite: '邀请同学加入',
                     teamConfirm: '确认成员变更',
                     publish: '确认发布课程',
@@ -2740,6 +2757,37 @@ export default function Workbench() {
                 }
               >
                 创建并担任组长
+              </Button>
+            </>
+          )}
+          {modal?.type === 'renameTeam' && (
+            <>
+              <label>
+                Team 名称
+                <Input
+                  placeholder="给你们的小组起个名字"
+                  value={form.name ?? modal.name ?? ''}
+                  onChange={(e) => field('name', e.target.value)}
+                />
+              </label>
+              <p className="muted">
+                历史提交记录中的成员与小组快照不受影响。
+              </p>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  mutation(
+                    'team-action',
+                    {
+                      teamId: modal.teamId,
+                      action: 'rename',
+                      name: form.name ?? modal.name,
+                    },
+                    '小组名称已修改',
+                  )
+                }
+              >
+                保存名称
               </Button>
             </>
           )}

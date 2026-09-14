@@ -226,6 +226,19 @@ test('team grading: 3 次上限、isBest 并列取较新、快照仅本组/本�
  // 其他组学生看不到甲组提交；教师看到全部且 isBest 正确
  assert.equal((await req(x,'state',undefined,s3.cookie)).data.submissions.length,0);
  const tt=(await req(x,'state',undefined,t.cookie)).data;assert.deepEqual(ids.map(id=>tt.submissions.find(s=>s.id===id)).map(s=>s.isBest),[false,true,false]);});
+test('team rename: 组长可改名、非组长/空名被拒',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ const s1=await login(x,'r1@example.com'),s2=await login(x,'r2@example.com');for(const p of [s1,s2])assert.equal((await req(x,'join',{code},p.cookie)).status,200);
+ const tid=(await req(x,'teams',{classId:kid,name:'旧名字'},s1.cookie)).data.id;
+ // 非组员改名 → 拒绝
+ const outsider=await req(x,'team-action',{teamId:tid,action:'rename',name:'新名字'},s2.cookie);assert.notEqual(outsider.status,200);
+ // s2 入组后仍非组长 → 403/400
+ x.sqlite.prepare('INSERT INTO members VALUES(?,?,?,2)').run(kid,tid,s2.user.id);
+ const notLeader=await req(x,'team-action',{teamId:tid,action:'rename',name:'新名字'},s2.cookie);assert.notEqual(notLeader.status,200);assert.match(notLeader.data.error,/仅组长/);
+ // 空名 → 400
+ assert.equal((await req(x,'team-action',{teamId:tid,action:'rename',name:'  '},s1.cookie)).status,400);
+ // 组长改名 → 200 且落库
+ const ok=await req(x,'team-action',{teamId:tid,action:'rename',name:'新名字'},s1.cookie);assert.equal(ok.status,200,JSON.stringify(ok.data));
+ assert.equal(x.sqlite.prepare('SELECT name FROM teams WHERE id=?').get(tid).name,'新名字');});
 test('course creation: blank by default, copy clones current course',async()=>{const x=await init();const a=(await login(x,'admin@example.com')).cookie;
  const blank=(await req(x,'courses',{title:'空白课'},a));assert.equal(blank.status,200);let st=(await req(x,'state?course='+blank.data.id,undefined,a)).data;assert.equal(st.draft.experiments.length,0);assert.equal(st.draft.title,'空白课');
  x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(fixtureDraft,blank.data.id);
