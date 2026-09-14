@@ -801,19 +801,21 @@ export default function Workbench() {
                         {c.classCount || 0} 个课堂 · 草案 v{c.revision}
                       </p>
                       <div className="lab-bottom">
-                        <span>
+                        <span className="lab-status">
                           {s.selected === c.id ? '正在编排' : '点击编排内容'}
                         </span>
-                        <span className="button-row">
+                        <span className="lab-actions">
                           <a
-                            className="text-action"
+                            className="lab-action"
                             href={'/api/course-export?course=' + c.id}
                             download
                             onClick={(e) => e.stopPropagation()}
                           >
+                            <Download size={13} />
                             导出
                           </a>
                           <button
+                            className="lab-action danger"
                             aria-label={'删除 ' + c.title}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -824,7 +826,7 @@ export default function Workbench() {
                               });
                             }}
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size={13} />
                             删除
                           </button>
                         </span>
