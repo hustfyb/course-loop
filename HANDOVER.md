@@ -35,7 +35,8 @@
 
 ```bash
 npm run build && npm run serve   # 运行（7100）
-npm run dev                       # 前端开发（vinext HMR，注意此模式无 Pi）
+npm run dev                       # 预览/本地运行（scripts/dev-preview.mjs → 完整 node-server，识别 --host/--port，含 Pi；源码比 dist 新时会提醒先 build）
+npm run dev:hmr                   # 前端 HMR 开发（vinext dev，注意此模式无 Pi、用独立 D1 模拟库）
 npm.cmd test                      # 主测试（改动后必跑）
 cd connector && node --test tests/*.test.mjs
 npm.cmd run typecheck && npm.cmd run build

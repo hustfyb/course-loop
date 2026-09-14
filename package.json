@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "node scripts/dev-preview.mjs",
+    "dev:hmr": "vinext dev",
     "build": "vinext build",
     "serve": "node server/node-server.mjs",
     "start": "node server/node-server.mjs",
