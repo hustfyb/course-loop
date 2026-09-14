@@ -177,6 +177,17 @@ test('draft grading: 缺省 team、非法值 400、individual 草案可发布',a
  const d=structuredClone(j.payload.draft);d.experiments[0].grading='individual';delete d.experiments[1].grading;const ok=await req(x,'connector/finish/'+j.id,{result:{draft:d,message:'已更新'}},'',lease);assert.equal(ok.status,200,JSON.stringify(ok.data));
  const saved=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);assert.equal(saved.experiments[0].grading,'individual');assert.equal(saved.experiments[1].grading,'team','缺失 grading 应默认 team');
  assert.equal((await req(x,'publish',{courseId:cid,revision:2},a.cookie)).status,200);});
+test('none grading: 无需提交实验可发布、提交返回 400',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);
+ // exp-1 改为无需提交（提交清单与评分标准留空）并正常发布
+ const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);d.experiments[0].grading='none';d.experiments[0].deliverables=[];d.experiments[0].rubric=[];x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);
+ const pub=await req(x,'publish',{courseId:cid,revision:1},a.cookie);assert.equal(pub.status,200,JSON.stringify(pub.data));
+ // none 实验若带评分项则草案校验拒绝
+ const bad=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);bad.experiments[1].grading='none';x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(bad),cid);
+ const rej=await req(x,'publish',{courseId:cid,revision:1},a.cookie);assert.equal(rej.status,400);assert.match(rej.data.error,/无需提交/);
+ // 学生提交 none 实验 → 400
+ const s1=await login(x,'n1@example.com');assert.equal((await req(x,'join',{code},s1.cookie)).status,200);
+ const f=new FormData();f.set('classId',kid);f.set('file',new File(['w'],'w.md'));const up=await req(x,'upload',f,s1.cookie);assert.equal(up.status,200,JSON.stringify(up.data));
+ const sub=await req(x,'submit',{experimentId:'exp-1',mode:'practice',fileIds:[up.data.id]},s1.cookie);assert.equal(sub.status,400);assert.match(sub.data.error,/无需提交/);});
 test('individual grading: 无小组学生上传+正式提交、第 4 次 409、他人文件 403、isBest 取最高',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
  // exp-1 改为个人判分并发布
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);d.experiments[0].grading='individual';x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);

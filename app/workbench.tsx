@@ -1081,11 +1081,12 @@ export default function Workbench() {
                           <div className="experiment-meta">
                             {e.week}
                             <span>
-                              {e.rubric.reduce(
-                                (n: number, r: Any) => n + r.max,
-                                0,
-                              )}{' '}
-                              分
+                              {e.grading === 'none'
+                                ? '不计分'
+                                : e.rubric.reduce(
+                                    (n: number, r: Any) => n + r.max,
+                                    0,
+                                  ) + ' 分'}
                             </span>
                           </div>
                           <h3>{e.title}</h3>
@@ -1415,7 +1416,9 @@ export default function Workbench() {
                           <span className="tag blue">
                             {e.grading === 'individual'
                               ? '个人判分'
-                              : '小组判分'}
+                              : e.grading === 'none'
+                                ? '无需提交'
+                                : '小组判分'}
                           </span>
                         </div>
                         <h2>{e.title}</h2>
@@ -1424,14 +1427,20 @@ export default function Workbench() {
                           <span>
                             {e.grading === 'individual'
                               ? '个人提交'
-                              : 'Team 提交'}
+                              : e.grading === 'none'
+                                ? '不计成绩'
+                                : 'Team 提交'}
                           </span>
                           <span>
-                            {e.rubric.reduce(
-                              (n: number, r: Any) => n + r.max,
-                              0,
-                            )}{' '}
-                            分
+                            {e.grading !== 'none' && (
+                              <>
+                                {e.rubric.reduce(
+                                  (n: number, r: Any) => n + r.max,
+                                  0,
+                                )}{' '}
+                                分
+                              </>
+                            )}
                             <ArrowUpRight size={16} />
                           </span>
                         </div>
@@ -1455,7 +1464,11 @@ export default function Workbench() {
                           <span className="tiny-label">EXPERIMENT DETAILS</span>
                           <h2>{detail.title}</h2>
                           <span className="tag blue">
-                            {detailIndividual ? '个人判分' : '小组判分'}
+                            {detail.grading === 'none'
+                              ? '无需提交'
+                              : detailIndividual
+                                ? '个人判分'
+                                : '小组判分'}
                           </span>
                         </div>
                         <button
@@ -1470,11 +1483,17 @@ export default function Workbench() {
                           <h3>任务与约束</h3>
                           <p className="prose-text">{detail.task}</p>
                           <h3>提交清单</h3>
-                          <ul>
-                            {detail.deliverables.map((d: string) => (
-                              <li key={d}>{d}</li>
-                            ))}
-                          </ul>
+                          {detail.grading === 'none' ? (
+                            <p className="muted">
+                              本实验为学习实践型，无需提交作业。
+                            </p>
+                          ) : (
+                            <ul>
+                              {detail.deliverables.map((d: string) => (
+                                <li key={d}>{d}</li>
+                              ))}
+                            </ul>
+                          )}
                           <h3>课程素材</h3>
                           {detail.sourceFiles?.map((f: string) => (
                             <a
@@ -1489,18 +1508,24 @@ export default function Workbench() {
                         </div>
                         <div>
                           <h3>评分标准</h3>
-                          {detail.rubric.map((r: Any) => (
-                            <div className="rubric-row" key={r.id}>
-                              <div>
-                                <strong>{r.title}</strong>
-                                <p>{r.criteria}</p>
+                          {detail.grading === 'none' ? (
+                            <p className="muted">
+                              本实验不计成绩，完成后继续下一个实验即可。
+                            </p>
+                          ) : (
+                            detail.rubric.map((r: Any) => (
+                              <div className="rubric-row" key={r.id}>
+                                <div>
+                                  <strong>{r.title}</strong>
+                                  <p>{r.criteria}</p>
+                                </div>
+                                <span>{r.max} 分</span>
                               </div>
-                              <span>{r.max} 分</span>
-                            </div>
-                          ))}
+                            ))
+                          )}
                         </div>
                       </div>
-                      {student && (
+                      {student && detail.grading !== 'none' && (
                         <div className="submission-box">
                           <h3>
                             {detailIndividual ? '提交我的成果' : '提交本组成果'}
@@ -2844,7 +2869,9 @@ export default function Workbench() {
                     <Check size={15} />
                     {e.title}
                     <span>
-                      {e.rubric.reduce((n: number, r: Any) => n + r.max, 0)} 分
+                      {e.grading === 'none'
+                        ? '不计分'
+                        : `${e.rubric.reduce((n: number, r: Any) => n + r.max, 0)} 分`}
                     </span>
                   </li>
                 ))}
