@@ -165,3 +165,8 @@ button.text-action{background:none;border:0;padding:0;height:auto;display:inline
 .assist-composer button{background:#4b72f2;color:#fff;border:none;border-radius:50%;width:40px;height:40px;display:grid;place-items:center;flex:none}
 @media (max-width:768px){.assist-fab{right:16px;bottom:16px;padding:12px 16px}.assist-panel{right:16px;left:16px;width:auto;bottom:84px;height:min(520px,calc(100vh - 118px))}}
 .log-pager{display:flex;align-items:center;gap:10px;justify-content:flex-end;margin-top:12px;font-size:13px}
+/* 提交页状态列表 */
+.submit-status{display:flex;flex-direction:column;gap:9px;border-top:1px solid var(--border);margin-top:16px;padding-top:16px;font-size:13px}
+.submit-status>strong{font-size:13px;color:#34445e}
+.submit-status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.submit-status-row>strong{color:#34445e;font-weight:600}

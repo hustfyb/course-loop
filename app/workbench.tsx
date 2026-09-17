@@ -111,23 +111,23 @@ const navsByRole: Record<string, readonly (readonly [string, string, Any])[]> =
       ['classes', '我的课堂', GraduationCap],
       ['courses', '实验内容', BookOpen],
       ['teams', '班级与 Team', Users],
-      ['reports', '提交与评估', ClipboardCheck],
+      ['reports', '作业评估', ClipboardCheck],
       ['settings', '课堂设置', Settings2],
     ],
     student: [
       ['courses', '实验内容', BookOpen],
       ['teams', '我的 Team', Users],
-      ['reports', '提交与评估', ClipboardCheck],
+      ['reports', '作业评估', ClipboardCheck],
     ],
     guest: [
       ['courses', '实验内容', BookOpen],
       ['teams', '我的 Team', Users],
-      ['reports', '提交与评估', ClipboardCheck],
+      ['reports', '作业评估', ClipboardCheck],
     ],
     pending: [
       ['courses', '实验内容', BookOpen],
       ['teams', '我的 Team', Users],
-      ['reports', '提交与评估', ClipboardCheck],
+      ['reports', '作业评估', ClipboardCheck],
     ],
   } as const;
 const defaultView: Record<string, string> = {
@@ -138,7 +138,6 @@ const defaultView: Record<string, string> = {
 const jobKindNames: Record<string, string> = {
   draft: '课程草案分析',
   grade: '实验评分',
-  answer: '个人核验',
   email: '邮件投递',
 };
 function Status({ value }: { value: string }) {
@@ -269,11 +268,10 @@ export default function Workbench() {
   const draft = s.draft || initialCourse;
   const team = s.teams?.find((t: Any) => t.id === s.myTeam);
   const detailIndividual = detail?.grading === 'individual';
-  const formalUsed = detail
-    ? (s.submissions || []).filter(
-        (x: Any) => x.experimentId === detail.id && x.mode === 'formal',
-      ).length
-    : 0;
+  const expSubs = detail
+    ? (s.submissions || []).filter((x: Any) => x.experimentId === detail.id)
+    : [];
+  const formalUsed = expSubs.length;
   const currentNav = navs.find((n) => n[0] === view) || navs[0];
   const open = (type: string, data: Any = {}) => {
     setForm({});
@@ -397,7 +395,7 @@ export default function Workbench() {
         ? '确认内容后发布，课堂里的学生看到的是已发布版本。'
         : teacher
           ? '课程管理员发布的实验内容，你的课堂按此进行。'
-          : '练习获得反馈，正式提交留下可追溯的成果。',
+          : '每次提交都会立即评分，最终取最高分计成绩。',
     ],
     overview: [
       'CLASS OVERVIEW',
@@ -417,7 +415,7 @@ export default function Workbench() {
     teams: [
       'LEARN TOGETHER',
       '一起构建，一起交付。',
-      '使用同一个 Team 完成实验，正式提交会保存成员快照。',
+      '使用同一个 Team 完成实验，提交会保存成员快照。',
     ],
     reports: [
       'EVIDENCE & FEEDBACK',
@@ -1379,7 +1377,7 @@ export default function Workbench() {
                           ? '以下为课程管理员发布的实验内容，只读。'
                           : s.release
                             ? '以下是已发布的实验要求。'
-                            : '实验发布后即可开始练习。'}
+                            : '实验发布后即可提交作业。'}
                     </span>
                     {admin && (
                       <Button
@@ -1573,24 +1571,6 @@ export default function Workbench() {
                               />
                               <div className="button-row">
                                 <Button
-                                  variant="outline"
-                                  disabled={busy || !attachments.length}
-                                  onClick={() =>
-                                    mutation(
-                                      'submit',
-                                      {
-                                        experimentId: detail.id,
-                                        mode: 'practice',
-                                        fileIds: attachments.map((f) => f.id),
-                                        note: message,
-                                      },
-                                      '练习已进入核验队列',
-                                    )
-                                  }
-                                >
-                                  提交练习
-                                </Button>
-                                <Button
                                   disabled={
                                     busy ||
                                     !attachments.length ||
@@ -1600,18 +1580,64 @@ export default function Workbench() {
                                   }
                                   onClick={() => open('formal')}
                                 >
-                                  {detailIndividual
-                                    ? '提交我的作业'
-                                    : '确认正式提交'}
+                                  提交作业
                                 </Button>
                                 <span className="muted">
                                   {formalUsed >= 3
-                                    ? '正式提交次数已用完（3 次），取最高分计成绩。'
+                                    ? '提交次数已用完（3 次），取最高分计成绩。'
                                     : detailIndividual
-                                      ? `正式提交以你本人名义进行，每个实验最多 3 次（已用 ${formalUsed} 次），取最高分计成绩。`
-                                      : `正式提交由组长确认，每个实验最多 3 次（已用 ${formalUsed} 次），取最高分计成绩。`}
+                                      ? `以你本人名义提交，每个实验最多 3 次（已用 ${formalUsed} 次），每次都会评分，取最高分计成绩。`
+                                      : `由组长提交，每个实验最多 3 次（已用 ${formalUsed} 次），每次都会评分，取最高分计成绩。`}
                                 </span>
                               </div>
+                              <div className="submit-status">
+                                  <strong>
+                                    提交记录（{expSubs.length}/3）
+                                  </strong>
+                                  {expSubs.length === 0 && (
+                                    <small className="muted">
+                                      还没有提交记录。提交后，每次提交的状态与分数都会显示在这里。
+                                    </small>
+                                  )}
+                                  {expSubs.map((sub: Any) => (
+                                    <div
+                                      className="submit-status-row"
+                                      key={sub.id}
+                                    >
+                                      <span className="tag">
+                                        第 {sub.ordinal} 次
+                                      </span>
+                                      <Status value={sub.status} />
+                                      {sub.status === 'complete' &&
+                                      sub.report ? (
+                                        <strong>
+                                          {sub.report.total} 分
+                                          {sub.isBest ? ' · 最高分' : ''}
+                                        </strong>
+                                      ) : sub.status === 'complete' ? (
+                                        <span className="muted">
+                                          已评分，待教师发布
+                                        </span>
+                                      ) : sub.status === 'failed' ? (
+                                        <span className="muted">
+                                          评分失败，请到「作业评估」重试
+                                        </span>
+                                      ) : (
+                                        <span className="muted">
+                                          小课评分中…
+                                        </span>
+                                      )}
+                                      <small className="muted">
+                                        {fmt(sub.created)}
+                                      </small>
+                                    </div>
+                                  ))}
+                                  {expSubs.length > 0 && (
+                                    <small className="muted">
+                                      提交成功后状态会自动更新；评分详情与改进建议在「作业评估」查看。
+                                    </small>
+                                  )}
+                                </div>
                             </>
                           )}
                         </div>
@@ -1952,7 +1978,7 @@ export default function Workbench() {
                 {!s.submissions?.length ? (
                   <Empty
                     title="还没有提交记录"
-                    body="小组上传练习或正式成果后，核验进度和分项反馈会出现在这里。"
+                    body="小组上传作业成果后，核验进度和分项反馈会出现在这里。"
                   >
                     <Button variant="outline" onClick={() => go('courses')}>
                       查看实验任务
@@ -1966,8 +1992,7 @@ export default function Workbench() {
                           <div>
                             <div className="button-row">
                               <span className="tag">
-                                {sub.mode === 'practice' ? '练习' : '正式'} · v
-                                {sub.ordinal}
+                                第 {sub.ordinal} 次提交
                                 {sub.superseded ? ' · 已被替代' : ''}
                               </span>
                               {sub.isBest && (
@@ -1987,7 +2012,11 @@ export default function Workbench() {
                             </p>
                           </div>
                           <div className="score">
-                            {sub.report ? sub.report.total : '—'}
+                            {sub.report
+                              ? sub.report.total
+                              : sub.reviewPending
+                                ? '待发布'
+                                : '—'}
                             <small>
                               /{' '}
                               {draft.experiments
@@ -1999,6 +2028,25 @@ export default function Workbench() {
                             </small>
                           </div>
                         </div>
+                        {(sub.status === 'running' ||
+                          sub.status === 'queued') && (
+                          <div className="notice" role="status">
+                            <LoaderCircle size={16} className="spin" />
+                            <span>
+                              {sub.status === 'running'
+                                ? '小课正在评分，通常几分钟内出结果；本页会自动刷新。'
+                                : '排在评分队列中，轮到后自动开始评分。'}
+                            </span>
+                          </div>
+                        )}
+                        {sub.reviewPending && (
+                          <div className="notice" role="status">
+                            <ShieldCheck size={16} />
+                            <span>
+                              小课已完成评分，成绩待教师复核发布后即可见。
+                            </span>
+                          </div>
+                        )}
                         {sub.error && (
                           <div className="feedback error">{sub.error}</div>
                         )}
@@ -2031,35 +2079,14 @@ export default function Workbench() {
                                 )}
                               </div>
                             )}
-                            {sub.report.questions?.length > 0 && (
+                            {sub.report.suggestions?.length > 0 && (
                               <div className="questions">
-                                <strong>个人核验</strong>
-                                {sub.report.questions.map(
-                                  (q: string, i: number) => (
-                                    <p key={i}>
-                                      {i + 1}. {q}
-                                    </p>
+                                <strong>改进建议</strong>
+                                {sub.report.suggestions.map(
+                                  (sg: string, i: number) => (
+                                    <p key={i}>{sg}</p>
                                   ),
                                 )}
-                                {student && !sub.answers?.length && (
-                                  <Button
-                                    size="sm"
-                                    onClick={() =>
-                                      open('answer', { submissionId: sub.id })
-                                    }
-                                  >
-                                    回答问题
-                                  </Button>
-                                )}
-                                {sub.answers?.map((a: Any) => (
-                                  <div className="answer-record" key={a.id}>
-                                    <p>{a.content}</p>
-                                    <Status value={a.status} />
-                                    {a.result?.feedback && (
-                                      <p>{a.result.feedback}</p>
-                                    )}
-                                  </div>
-                                ))}
                               </div>
                             )}
                           </>
@@ -2097,7 +2124,7 @@ export default function Workbench() {
                                 })
                               }
                             >
-                              重试核验
+                              重试评分
                             </Button>
                           )}
                           {teacher && sub.report && (
@@ -2360,7 +2387,7 @@ export default function Workbench() {
                       </Button>
                     </div>
                     <p>
-                      小组最多 {cls.maxSize} 人 · 每实验正式提交最多 3
+                      小组最多 {cls.maxSize} 人 · 每实验最多提交 3
                       次，取最高分计成绩
                     </p>
                     <p>
@@ -2406,7 +2433,7 @@ export default function Workbench() {
           )}
           <footer className="workspace-footer">
             <span>先定义标准，再验证成果。</span>
-            <span>练习反馈 / 正式核验 / 可追溯评分</span>
+            <span>即时反馈 / 可追溯评分 / 最高分计成绩</span>
           </footer>
         </main>
       </SidebarInset>
@@ -2434,8 +2461,7 @@ export default function Workbench() {
                     invite: '邀请同学加入',
                     teamConfirm: '确认成员变更',
                     publish: '确认发布课程',
-                    formal: '确认正式提交',
-                    answer: '个人理解核验',
+                    formal: '确认提交作业',
                     appeal: '对评分提出申诉',
                     review: '复核与成绩发布',
                     pair: '生成连接器凭据',
@@ -2453,8 +2479,8 @@ export default function Workbench() {
                   ? '首次登录请补充你的身份信息，之后使用邮箱验证码即可直接登录。'
                   : modal?.type === 'formal'
                     ? detailIndividual
-                      ? '本次将以你本人名义固定提交文件和评分规则。原版本不会被覆盖。'
-                      : '本次将固定提交文件、评分规则和当前小组成员。原版本不会被覆盖。'
+                      ? '本次将以你本人名义固定提交文件和评分规则，提交后立即评分。原版本不会被覆盖。'
+                      : '本次将固定提交文件、评分规则和当前小组成员，提交后立即评分。原版本不会被覆盖。'
                     : modal?.type === 'publish'
                       ? '学生将看到以下草案版本。之后的修改进入新版本，不改变历史提交依据。'
                       : modal?.type === 'newClass'
@@ -2965,31 +2991,26 @@ export default function Workbench() {
                     'submit',
                     {
                       experimentId: detail.id,
-                      mode: 'formal',
                       fileIds: attachments.map((f) => f.id),
                       note: message,
                     },
-                    '正式提交已锁定，等待核验',
+                    '提交成功！小课正在评分，状态见下方列表。',
                   )
                 }
               >
-                锁定并提交
+                提交并评分
               </Button>
             </>
           )}
-          {['answer', 'appeal'].includes(modal?.type) && (
+          {modal?.type === 'appeal' && (
             <>
               <textarea
                 className="text-area"
                 rows={7}
-                aria-label={modal.type === 'answer' ? '个人回答' : '申诉理由'}
+                aria-label="申诉理由"
                 value={form.content || ''}
                 onChange={(e) => field('content', e.target.value)}
-                placeholder={
-                  modal.type === 'answer'
-                    ? '逐题说明你的理解，引用你完成的具体文件或测试。'
-                    : '指出评分项、具体证据及你认为需要复核的理由。'
-                }
+                placeholder="指出评分项、具体证据及你认为需要复核的理由。"
               />
               <Button
                 disabled={busy}
@@ -3111,7 +3132,7 @@ export default function Workbench() {
                 />
               </label>
               <label>
-                正式提交截止时间
+                提交截止时间
                 <Input
                   type="datetime-local"
                   value={form.deadline || ''}

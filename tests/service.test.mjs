@@ -54,7 +54,7 @@ test('team invitation, single team, capacity, recipient authorization and formal
  // 正式提交不再锁定成员：组员可自行退出，快照保留
  assert.equal((await req(x,'team-action',{teamId:tid,action:'leave'},sB.cookie)).status,200);
  const saved=x.sqlite.prepare('SELECT * FROM submissions').get();assert.equal(saved.classId,kid);assert.equal(JSON.parse(saved.members).length,2);
- assert.equal((await req(x,'submit',args,sA.cookie)).status,200);assert.equal((await req(x,'submit',args,sA.cookie)).status,200);const over=await req(x,'submit',args,sA.cookie);assert.equal(over.status,409);assert.match(over.data.error,/正式提交最多 3 次/);});
+ assert.equal((await req(x,'submit',args,sA.cookie)).status,200);assert.equal((await req(x,'submit',args,sA.cookie)).status,200);const over=await req(x,'submit',args,sA.cookie);assert.equal(over.status,409);assert.match(over.data.error,/每个实验最多提交 3 次/);});
 test('team repo: member sets GitHub URL, validation, non-member 403, clearing',async()=>{const x=await init();const {kid,code}=await classroom(x);const s1=await login(x,'r1@example.com');const s2=await login(x,'r2@example.com');for(const p of [s1,s2])assert.equal((await req(x,'join',{code},p.cookie)).status,200);
  const tid=(await req(x,'teams',{classId:kid,name:'仓库组'},s1.cookie)).data.id;
  // 组员设置成功，末尾斜杠被规范化；state 中带 repo
@@ -71,9 +71,11 @@ test('ACP job lease, invalid scoring rejection, stable version, completion and a
  const tsnap=(await req(x,'state',undefined,t.cookie)).data;assert.equal(tsnap.draft.title,'课程修订');assert.equal(tsnap.release.revision,2);assert.equal(tsnap.course.id,cid);assert.equal(tsnap.draft.experiments.length,4);
  const s1=await login(x,'student@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['evidence'],'spec.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;const sub=(await req(x,'submit',{experimentId:'exp-1',mode:'formal',fileIds:[fid]},s1.cookie)).data;
  j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(j.kind,'grade');const lease={...headers,'x-job-lease':j.lease};const report={items:j.payload.experiment.rubric.map(r=>({id:r.id,score:r.max,reason:'对应条款验证',evidence:['spec.md:1']})),questions:['解释测试依据']};const invalid=structuredClone(report);invalid.items[0].score=100;assert.equal((await req(x,'connector/finish/'+j.id,{result:invalid},'',lease)).status,400);assert.equal((await req(x,'connector/finish/'+j.id,{result:report},'',lease)).status,200);assert.ok(x.sqlite.prepare('SELECT finished FROM jobs WHERE id=?').get(j.id).finished>0,'完成任务应记录完成时间');
- assert.equal((await req(x,'state',undefined,s1.cookie)).data.submissions[0].report,null);assert.ok((await req(x,'state',undefined,t.cookie)).data.submissions[0].report);
+ assert.equal((await req(x,'state',undefined,s1.cookie)).data.submissions[0].report.total,100,'成绩立即发布学生可见');assert.ok((await req(x,'state',undefined,t.cookie)).data.submissions[0].report);
  assert.equal((await req(x,'grade-action',{submissionId:sub.id,reason:'校准样例已核对'},t.cookie)).status,200);assert.equal((await req(x,'state',undefined,s1.cookie)).data.submissions[0].report.total,100);
- assert.equal((await req(x,'appeal',{submissionId:sub.id,content:'请求复核'},s1.cookie)).status,200);assert.equal((await req(x,'answer',{submissionId:sub.id,content:'这条测试检查列表未被修改'},s1.cookie)).status,200);assert.equal((await req(x,'answer',{submissionId:sub.id,content:'重复'},s1.cookie)).status,409);});
+ assert.equal((await req(x,'appeal',{submissionId:sub.id,content:'请求复核'},s1.cookie)).status,200);
+ // 追问/回答流程已移除：answer 端点不存在
+ assert.equal((await req(x,'answer',{submissionId:sub.id,content:'x'},s1.cookie)).status,404);});
 test('non-owner teacher cannot see or operate another teacher\'s class',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);const t2=await login(x,'other@example.com','teacher');
  const s0=(await req(x,'state',undefined,t2.cookie)).data;assert.equal(s0.classes.length,0);assert.equal(s0.courses.length,1);assert.equal(s0.selected,undefined);
  assert.equal((await req(x,'class-settings',{classId:kid,maxSize:4,autoPublish:false},t2.cookie)).status,403);assert.equal((await req(x,'teams',{classId:kid,name:'抢注'},t2.cookie)).status,400);
@@ -198,15 +200,14 @@ test('individual grading: 无小组学生上传+正式提交、第 4 次 409、�
  // 他人文件 403
  assert.equal((await req(x,'submit',{experimentId:'exp-1',mode:'formal',fileIds:[up.data.id]},s2.cookie)).status,403);
  const args={experimentId:'exp-1',mode:'formal',fileIds:[up.data.id]};const ids=[];for(let i=0;i<3;i++){const r=await req(x,'submit',args,s1.cookie);assert.equal(r.status,200,JSON.stringify(r.data));ids.push(r.data.id);}
- const fourth=await req(x,'submit',args,s1.cookie);assert.equal(fourth.status,409);assert.match(fourth.data.error,/正式提交最多 3 次/);
- // practice 不计上限、不需要小组
- const pr=await req(x,'submit',{experimentId:'exp-1',mode:'practice',fileIds:[up.data.id]},s1.cookie);assert.equal(pr.status,200,JSON.stringify(pr.data));
+ const fourth=await req(x,'submit',args,s1.cookie);assert.equal(fourth.status,409);assert.match(fourth.data.error,/每个实验最多提交 3 次/);
+ // 统一计次：第 4 次提交无论类型都被拒
+ const pr=await req(x,'submit',{experimentId:'exp-1',mode:'practice',fileIds:[up.data.id]},s1.cookie);assert.equal(pr.status,409);assert.match(pr.data.error,/最多提交 3 次/);
  // 记录形态：teamId NULL、studentId=本人、members 快照=本人
  const saved=x.sqlite.prepare('SELECT * FROM submissions WHERE id=?').get(ids[0]);assert.equal(saved.teamId,null);assert.equal(saved.studentId,s1.user.id);assert.deepEqual(JSON.parse(saved.members).map(m=>m.id),[s1.user.id]);
  // isBest：先低后高再低 → 最高者（第 2 次）isBest，其余 false；practice 永不 best
  const totals=[60,85,70];ids.forEach((sid,i)=>x.sqlite.prepare('INSERT INTO grades VALUES(?,?,1,?)').run(sid,JSON.stringify({items:[],total:totals[i]}),Date.now()));
- x.sqlite.prepare('INSERT INTO grades VALUES(?,?,1,?)').run(pr.data.id,JSON.stringify({items:[],total:100}),Date.now());
- const st=(await req(x,'state',undefined,s1.cookie)).data;assert.deepEqual(ids.map(id=>st.submissions.find(s=>s.id===id)).map(s=>s.isBest),[false,true,false]);assert.equal(st.submissions.find(s=>s.id===pr.data.id).isBest,false,'practice 永不 best');
+ const st=(await req(x,'state',undefined,s1.cookie)).data;assert.deepEqual(ids.map(id=>st.submissions.find(s=>s.id===id)).map(s=>s.isBest),[false,true,false]);
  // 学生视角只看本人提交；教师看到全部且 isBest 一致，个人提交 teamName 为 NULL
  assert.equal((await req(x,'state',undefined,s2.cookie)).data.submissions.length,0);
  const tt=(await req(x,'state',undefined,t.cookie)).data;assert.deepEqual(ids.map(id=>tt.submissions.find(s=>s.id===id)).map(s=>s.isBest),[false,true,false]);assert.equal(tt.submissions.find(s=>s.id===ids[0]).teamName,null);});
@@ -219,7 +220,7 @@ test('team grading: 3 次上限、isBest 并列取较新、快照仅本组/本�
  const args={experimentId:'exp-1',mode:'formal',fileIds:[fid]};
  assert.equal((await req(x,'submit',args,s2.cookie)).status,403,'非组长正式提交 403');
  const ids=[];for(let i=0;i<3;i++){const r=await req(x,'submit',args,s1.cookie);assert.equal(r.status,200,JSON.stringify(r.data));ids.push(r.data.id);}
- const fourth=await req(x,'submit',args,s1.cookie);assert.equal(fourth.status,409);assert.match(fourth.data.error,/正式提交最多 3 次/);
+ const fourth=await req(x,'submit',args,s1.cookie);assert.equal(fourth.status,409);assert.match(fourth.data.error,/每个实验最多提交 3 次/);
  // isBest 并列取较新：totals [80,80,70] → 第 2 次（较新的 80）best
  const totals=[80,80,70];ids.forEach((sid,i)=>x.sqlite.prepare('INSERT INTO grades VALUES(?,?,1,?)').run(sid,JSON.stringify({items:[],total:totals[i]}),Date.now()));
  const st=(await req(x,'state',undefined,s2.cookie)).data;assert.deepEqual(ids.map(id=>st.submissions.find(s=>s.id===id)).map(s=>s.isBest),[false,true,false],'并列取较新');
@@ -247,3 +248,35 @@ test('course export/import: round-trip preserves draft; invalid rejected; non-ad
  const ex=await req(x,'course-export?course='+cid,undefined,a.cookie);assert.equal(ex.status,200);const body=ex.data;assert.equal(body.format,'course-loop-course');assert.equal(body.course.experiments.length,4);assert.equal((await req(x,'course-export?course='+cid,undefined,t.cookie)).status,403);
  const im=await req(x,'course-import',{course:body.course},a.cookie);assert.equal(im.status,200,JSON.stringify(im.data));const st=(await req(x,'state?course='+im.data.id,undefined,a.cookie)).data;assert.equal(st.draft.experiments.length,4);assert.equal(st.draft.experiments[0].id,'exp-1');assert.equal(st.draft.experiments[0].rubric.reduce((n,r)=>n+r.max,0),100);
  assert.equal((await req(x,'course-import',{course:{title:''}},a.cookie)).status,400);assert.equal((await req(x,'course-import',{course:{title:'ok',experiments:[{id:'e1',title:'t',task:'t',deliverables:['d'],rubric:[{id:'r',title:'r',max:1,criteria:'c'}]}]}},a.cookie)).status,400);assert.equal((await req(x,'course-import',{course:body.course},t.cookie)).status,403);});
+test('grading leniency: baseline 提交映射到 60-100 区间；baseline=false 如实低分；教师改分不映射',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ await req(x,'chat',{courseId:cid,message:'整理',fileIds:[]},a.cookie);let j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;const d=j.payload.draft;assert.equal((await req(x,'connector/finish/'+j.id,{result:{draft:d,message:'ok'}},'',{...headers,'x-job-lease':j.lease})).status,200);assert.equal((await req(x,'publish',{courseId:cid,revision:2},a.cookie)).status,200);
+ const s1=await login(x,'l1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'宽松组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['print(1)'],'m.py'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ const rubric=(await req(x,'state',undefined,s1.cookie)).data.draft.experiments.find(e=>e.id==='exp-1').rubric;
+ // 提交 1：模型按项严格给分（raw 10）+ baseline 缺省 true → 映射 64=60+0.4×10，各项=0.6max+0.4raw
+ await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const low={items:rubric.map((r,i)=>({id:r.id,score:i===0?10:0,reason:'基本未达成，建议补齐规格与测试',evidence:['m.py:1']})),suggestions:['先写规格再实现','补充边界测试']};
+ assert.equal((await req(x,'connector/finish/'+j.id,{result:low},'',{...headers,'x-job-lease':j.lease})).status,200);
+ const rep=(await req(x,'state',undefined,s1.cookie)).data.submissions[0].report;
+ assert.equal(rep.total,64);assert.deepEqual(rep.suggestions,['先写规格再实现','补充边界测试']);
+ assert.equal(rep.items[0].score,40);assert.equal(rep.items[1].score,24);
+ // 提交 2：baseline=false（提交与要求无关）→ 不映射，如实低分
+ await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const off={items:rubric.map((r,i)=>({id:r.id,score:i===0?10:0,reason:'提交与要求无关',evidence:['m.py:1']})),baseline:false};
+ assert.equal((await req(x,'connector/finish/'+j.id,{result:off},'',{...headers,'x-job-lease':j.lease})).status,200);
+ const rep2=(await req(x,'state',undefined,s1.cookie)).data.submissions[0].report;
+ assert.equal(rep2.total,10);
+ // 提交 3：满分 raw 100 → 映射后仍 100，无标记；isBest 取最高
+ await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const full={items:rubric.map(r=>({id:r.id,score:r.max,reason:'完全达成',evidence:['m.py:1']}))};
+ assert.equal((await req(x,'connector/finish/'+j.id,{result:full},'',{...headers,'x-job-lease':j.lease})).status,200);
+ const st3=(await req(x,'state',undefined,s1.cookie)).data;const sub3=st3.submissions[0];
+ assert.equal(sub3.report.total,100);assert.equal(sub3.flooredToPass,undefined);
+ assert.equal(sub3.isBest,true,'最高分即 best');assert.equal(st3.submissions[1].isBest,false);assert.equal(st3.submissions[2].isBest,false);
+ // 第 4 次提交拒绝；教师复核改分（如查实抄袭）→ 不映射，教师意志优先
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,409);
+ const t=await login(x,'teacher@example.com','teacher');
+ const edit=await req(x,'grade-action',{submissionId:sub3.id,reason:'查重确认抄袭',report:{items:rubric.map(r=>({id:r.id,score:5,reason:'抄袭证据充分',evidence:['m.py:1']}))}},t.cookie);assert.equal(edit.status,200,JSON.stringify(edit.data));
+ assert.equal((await req(x,'state',undefined,t.cookie)).data.submissions.find(s=>s.id===sub3.id).report.total,10,'教师改分不映射');});
