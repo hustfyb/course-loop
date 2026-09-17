@@ -3037,7 +3037,10 @@ export default function Workbench() {
               </label>
               {modal.sub?.report?.items.map((i: Any) => (
                 <label className="score-edit" key={i.id}>
-                  {i.id}
+                  {draft.experiments.find(
+                    (e: Any) => e.id === modal.sub.experimentId,
+                  )
+                    ?.rubric.find((r: Any) => r.id === i.id)?.title || i.id}
                   <Input
                     type="number"
                     step="0.5"
