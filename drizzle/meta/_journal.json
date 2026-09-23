@@ -43,6 +43,13 @@
       "when": 1789293654100,
       "tag": "0005_unique_the_professor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790168962936,
+      "tag": "0006_ambiguous_scalphunter",
+      "breakpoints": true
     }
   ]
 }

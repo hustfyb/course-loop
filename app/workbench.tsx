@@ -1147,6 +1147,31 @@ export default function Workbench() {
                             <small>{c.teams} 个 Team</small>
                           </div>
                         </div>
+                        <div className="button-row">
+                          {c.isPrimary ? (
+                            <span className="tag green">
+                              主课堂 · 统一设置截止时间
+                            </span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                act(async () => {
+                                  await call('course-primary', {
+                                    courseId: s.selected,
+                                    classId: c.id,
+                                  });
+                                  setNotice(
+                                    '已设为主课堂，其截止时间对本课程全部课堂生效',
+                                  );
+                                })
+                              }
+                            >
+                              设为主课堂
+                            </Button>
+                          )}
+                        </div>
                       </section>
                     ))}
                   </div>
@@ -3134,14 +3159,23 @@ export default function Workbench() {
                   onChange={(e) => field('maxSize', e.target.value)}
                 />
               </label>
-              <label>
-                提交截止时间
-                <Input
-                  type="datetime-local"
-                  value={form.deadline || ''}
-                  onChange={(e) => field('deadline', e.target.value)}
-                />
-              </label>
+              {cls.isPrimary || !cls.primaryDeadline ? (
+                <label>
+                  提交截止时间
+                  <Input
+                    type="datetime-local"
+                    value={form.deadline || ''}
+                    onChange={(e) => field('deadline', e.target.value)}
+                  />
+                </label>
+              ) : (
+                <p className="muted">
+                  提交截止时间由主课堂「{cls.primaryName}
+                  」统一设置：
+                  {cls.primaryDeadline ? fmt(cls.primaryDeadline) : '未设置'}
+                  ，本课堂自动继承。
+                </p>
+              )}
               <label className="switch-label">
                 通过校准后自动发布正常成绩
                 <Switch
@@ -3155,7 +3189,10 @@ export default function Workbench() {
                   mutation('class-settings', {
                     classId: s.selected,
                     maxSize: Number(form.maxSize),
-                    deadline: form.deadline,
+                    deadline:
+                      cls.isPrimary || !cls.primaryDeadline
+                        ? form.deadline
+                        : undefined,
                     autoPublish: !!form.autoPublish,
                   })
                 }

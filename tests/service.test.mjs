@@ -96,7 +96,7 @@ test('capacity, unregistered invitation visibility, cancellation and unresolved 
  const j=(await req(x,'chat',{courseId:cid,message:'改任务'},a.cookie)).data.jobId;assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,409);
  assert.equal((await req(x,'job-action',{id:j,action:'cancel'},t.cookie)).status,403);await req(x,'job-action',{id:j,action:'cancel'},a.cookie);
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses').get().draft);d.questions=['MCP 是否必做？'];x.sqlite.prepare('UPDATE courses SET draft=?').run(JSON.stringify(d));assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,400);});
-test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,6);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
+test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,7);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
  const t=Date.now();sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u1','t@x.com','教师','','teacher',t);sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u2','s@x.com','学生','001','student',t);
  sqlite.prepare("INSERT INTO courses(id,owner,title,term,draft,joinCode,maxSize,deadline,maxFormal,autoPublish,created) VALUES('c1','u1','课','学期','{}','CODE123456',5,NULL,3,1,?)").run(t);
  sqlite.prepare("INSERT INTO enrollments VALUES('c1','u2')").run();sqlite.prepare("INSERT INTO teams VALUES('tm1','c1','u2','组',0,?)").run(t);sqlite.prepare("INSERT INTO members VALUES('c1','tm1','u2',1)").run();sqlite.prepare("INSERT INTO invites VALUES('iv1','tm1','n@x.com','pending',?)").run(t);
@@ -280,3 +280,27 @@ test('grading leniency: baseline 提交映射到 60-100 区间；baseline=false 
  const t=await login(x,'teacher@example.com','teacher');
  const edit=await req(x,'grade-action',{submissionId:sub3.id,reason:'查重确认抄袭',report:{items:rubric.map(r=>({id:r.id,score:5,reason:'抄袭证据充分',evidence:['m.py:1']}))}},t.cookie);assert.equal(edit.status,200,JSON.stringify(edit.data));
  assert.equal((await req(x,'state',undefined,t.cookie)).data.submissions.find(s=>s.id===sub3.id).report.total,10,'教师改分不映射');});
+test('primary class: 管理员设置主课堂，其截止时间对本课程全部课堂生效',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ const k2=(await req(x,'classes',{courseId:cid,name:'二课堂'},t.cookie)).data;
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'p1@example.com');await req(x,'join',{code:k2.joinCode},s1.cookie);const tid=(await req(x,'teams',{classId:k2.id,name:'继承组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',k2.id);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ // 未设主课堂：二课堂自己没设截止时间 → 可提交
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,200);
+ // 管理员把第一课堂设为主课堂，其截止时间已过期 → 二课堂学生继承并被拒
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,kid);
+ assert.equal((await req(x,'course-primary',{courseId:cid,classId:kid},a.cookie)).status,200);
+ const blocked=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(blocked.status,400);assert.match(blocked.data.error,/已超过截止时间/);
+ // 非管理员不能设置主课堂；classId 不属于本课程 400
+ assert.equal((await req(x,'course-primary',{courseId:cid,classId:kid},t.cookie)).status,403);
+ assert.equal((await req(x,'course-primary',{courseId:cid,classId:'nope'},a.cookie)).status,400);
+ // 主课堂截止时间改到未来 → 恢复可提交；教师快照带主课堂标记
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()+86400000,kid);
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,200);
+ const ts=(await req(x,'state',undefined,t.cookie)).data;const k1=ts.classes.find(c=>c.id===kid);const kk2=ts.classes.find(c=>c.id===k2.id);
+ assert.ok(k1.isPrimary,'主课堂标记');assert.ok(!kk2.isPrimary,'非主课堂无标记');assert.equal(kk2.primaryName,k1.name);assert.ok(kk2.primaryDeadline>Date.now());
+ // 清除主课堂 → 恢复按各课堂自己的截止时间
+ assert.equal((await req(x,'course-primary',{courseId:cid,classId:''},a.cookie)).status,200);
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,k2.id);
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'清除主课堂后按本课堂过期截止时间拦截');
+ // 管理员快照标记主课堂
+ const as=(await req(x,'state',undefined,a.cookie)).data;assert.equal(as.primaryClassId,null);});
