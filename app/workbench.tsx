@@ -282,6 +282,7 @@ export default function Workbench() {
   const [reportExp, setReportExp] = useState('');
   const [bestOnly, setBestOnly] = useState(false);
   const [openSub, setOpenSub] = useState('');
+  const [openUnit, setOpenUnit] = useState('');
   const reportExps: Any[] = draft.experiments || [];
   const activeReportExp =
     reportExps.find((e: Any) => e.id === reportExp)?.id ||
@@ -2191,6 +2192,7 @@ export default function Workbench() {
                             key={e.id}
                             onClick={() => {
                               setReportExp(e.id);
+                              setOpenUnit('');
                               setOpenSub('');
                             }}
                           >
@@ -2262,7 +2264,9 @@ export default function Workbench() {
                                 <TableRow
                                   className="sub-row"
                                   onClick={() =>
-                                    setOpenSub(openSub === u.key ? '' : u.key)
+                                    setOpenUnit(
+                                      openUnit === u.key ? '' : u.key,
+                                    )
                                   }
                                 >
                                   <TableCell>
@@ -2296,17 +2300,19 @@ export default function Workbench() {
                                         variant="outline"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setOpenSub(
-                                            openSub === u.key ? '' : u.key,
+                                          setOpenUnit(
+                                            openUnit === u.key ? '' : u.key,
                                           );
                                         }}
                                       >
-                                        {openSub === u.key ? '收起' : '展开明细'}
+                                        {openUnit === u.key
+                                          ? '收起'
+                                          : '展开明细'}
                                       </Button>
                                     )}
                                   </TableCell>
                                 </TableRow>
-                                {openSub === u.key && (
+                                {openUnit === u.key && (
                                   <TableRow className="sub-detail-row">
                                     <TableCell colSpan={5}>
                                       <div className="sub-detail">
@@ -2334,7 +2340,7 @@ export default function Workbench() {
                                                 onClick={() =>
                                                   setOpenSub(
                                                     openSub === sub.id
-                                                      ? u.key
+                                                      ? ''
                                                       : sub.id,
                                                   )
                                                 }
@@ -2455,9 +2461,10 @@ export default function Workbench() {
                             onClick={() => {
                               setReportExp(a.experimentId);
                               setBestOnly(false);
-                              setOpenSub(
+                              setOpenUnit(
                                 a.teamId ? 't' + a.teamId : 'u' + a.studentId,
                               );
+                              setOpenSub('');
                             }}
                           >
                             查看原始作业
