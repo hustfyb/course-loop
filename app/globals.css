@@ -184,3 +184,10 @@ tr.sub-detail-row>td{background:#f9fafd}
 .sub-detail{padding:10px 6px;display:flex;flex-direction:column;gap:12px}
 
 .sub-nested{border-left:2px solid var(--border);padding:6px 0 6px 14px;display:flex;flex-direction:column;gap:12px}
+/* 提交明细展开：脱离表格自动布局，避免横向滚动条 */
+tr.sub-detail-row>td{display:block}
+table[data-slot=table] tr.sub-detail-row>td{display:block}
+.sub-detail-fixed{width:100%;min-width:0;overflow-x:hidden}
+.sub-detail-fixed .score-items{grid-template-columns:1fr}
+@media(min-width:1100px){.sub-detail-fixed .score-items{grid-template-columns:repeat(2,1fr)}}
+.sub-detail-fixed .questions p,.sub-detail-fixed .score-items small{word-break:break-word;overflow-wrap:anywhere}

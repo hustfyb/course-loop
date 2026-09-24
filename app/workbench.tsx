@@ -37,6 +37,7 @@ import {
   Link2,
   Inbox,
   Pencil,
+  ChevronDown,
 } from 'lucide-react';
 import {
   SidebarProvider,
@@ -2305,9 +2306,16 @@ export default function Workbench() {
                                           );
                                         }}
                                       >
-                                        {openUnit === u.key
-                                          ? '收起'
-                                          : '展开明细'}
+                                        <span className="inline-flex items-center gap-1">
+                                          {openUnit === u.key ? (
+                                            <ChevronDown size={14} />
+                                          ) : (
+                                            <ChevronRight size={14} />
+                                          )}
+                                          {openUnit === u.key
+                                            ? '收起'
+                                            : '展开明细'}
+                                        </span>
                                       </Button>
                                     )}
                                   </TableCell>
@@ -2315,7 +2323,7 @@ export default function Workbench() {
                                 {openUnit === u.key && (
                                   <TableRow className="sub-detail-row">
                                     <TableCell colSpan={5}>
-                                      <div className="sub-detail">
+                                      <div className="sub-detail sub-detail-fixed">
                                         {u.subs.map((sub: Any) => (
                                           <Fragment key={sub.id}>
                                             <div className="button-row">
@@ -2345,9 +2353,16 @@ export default function Workbench() {
                                                   )
                                                 }
                                               >
-                                                {openSub === sub.id
-                                                  ? '收起详情'
-                                                  : '查看详情'}
+                                                <span className="inline-flex items-center gap-1">
+                                                  {openSub === sub.id ? (
+                                                    <ChevronDown size={13} />
+                                                  ) : (
+                                                    <ChevronRight size={13} />
+                                                  )}
+                                                  {openSub === sub.id
+                                                    ? '收起详情'
+                                                    : '查看详情'}
+                                                </span>
                                               </Button>
                                             </div>
                                             {openSub === sub.id && (
