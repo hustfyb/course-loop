@@ -293,9 +293,46 @@ export default function Workbench() {
   const expReportSubs = (s.submissions || []).filter(
     (x: Any) => x.experimentId === activeReportExp,
   );
-  const shownReportSubs = bestOnly
-    ? expReportSubs.filter((x: Any) => x.isBest)
-    : expReportSubs;
+  const activeExpDetail = reportExps.find((e: Any) => e.id === activeReportExp);
+  const expIndividual = activeExpDetail?.grading === 'individual';
+  const expUnits: Any[] = [];
+  if (expIndividual) {
+    for (const st of s.students || []) {
+      expUnits.push({
+        key: 'u' + st.id,
+        label:
+          st.name + (st.studentNo ? '（' + st.studentNo + '）' : ''),
+        subs: expReportSubs.filter((x: Any) => x.studentId === st.id),
+      });
+    }
+    for (const x of expReportSubs) {
+      if (x.studentId && !expUnits.some((u: Any) => u.key === 'u' + x.studentId))
+        expUnits.push({
+          key: 'u' + x.studentId,
+          label: x.members?.[0]?.name || x.studentId.slice(0, 8),
+          subs: [x],
+        });
+    }
+  } else {
+    for (const t of s.teams || []) {
+      expUnits.push({
+        key: 't' + t.id,
+        label: t.name,
+        subs: expReportSubs.filter((x: Any) => x.teamId === t.id),
+      });
+    }
+    for (const x of expReportSubs) {
+      if (x.teamId && !expUnits.some((u: Any) => u.key === 't' + x.teamId))
+        expUnits.push({
+          key: 't' + x.teamId,
+          label: x.teamName || x.teamId.slice(0, 8),
+          subs: [x],
+        });
+    }
+  }
+  const shownUnits = bestOnly
+    ? expUnits.filter((u: Any) => u.subs.length > 0)
+    : expUnits;
   // 单次提交的评估详情：教师表格展开与学生卡片共用
   const subDetail = (sub: Any) => (
     <>
@@ -2171,90 +2208,156 @@ export default function Workbench() {
                         {expReportSubs.length} 次提交 · 系统异常不会直接计零分
                       </span>
                       <label className="switch-label">
-                        只看最高分
+                        隐藏未提交
                         <Switch
                           checked={!!bestOnly}
                           onCheckedChange={(v) => setBestOnly(!!v)}
                         />
                       </label>
                     </div>
-                    {shownReportSubs.length === 0 ? (
+                    {shownUnits.length === 0 ? (
                       <Empty
                         title="该实验还没有提交"
-                        body="学生上传作业成果后，列表和评分会出现在这里。"
+                        body={
+                          expIndividual
+                            ? '学生提交作业后，列表和评分会出现在这里。'
+                            : '小组上传作业成果后，列表和评分会出现在这里。'
+                        }
                       />
                     ) : (
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>小组 / 学生</TableHead>
-                            <TableHead>次数</TableHead>
-                            <TableHead>提交时间</TableHead>
+                            <TableHead>
+                              {expIndividual ? '学生' : '小组'}
+                            </TableHead>
+                            <TableHead>提交次数</TableHead>
+                            <TableHead>最高分</TableHead>
                             <TableHead>状态</TableHead>
-                            <TableHead>分数</TableHead>
                             <TableHead></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {shownReportSubs.map((sub: Any) => (
-                            <Fragment key={sub.id}>
-                              <TableRow
-                                className="sub-row"
-                                onClick={() =>
-                                  setOpenSub(openSub === sub.id ? '' : sub.id)
-                                }
-                              >
-                                <TableCell>
-                                  <strong>
-                                    {sub.teamName || sub.members[0]?.name}
-                                  </strong>
-                                </TableCell>
-                                <TableCell>
-                                  第 {sub.ordinal} 次
-                                  {sub.superseded ? ' · 旧' : ''}
-                                </TableCell>
-                                <TableCell>{fmt(sub.created)}</TableCell>
-                                <TableCell>
-                                  <Status value={sub.status} />
-                                </TableCell>
-                                <TableCell>
-                                  {sub.report ? (
-                                    <strong>
-                                      {sub.report.total}
-                                      {sub.isBest ? ' · 最高分' : ''}
-                                    </strong>
-                                  ) : sub.reviewPending ? (
-                                    '待发布'
-                                  ) : (
-                                    '—'
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenSub(
-                                        openSub === sub.id ? '' : sub.id,
-                                      );
-                                    }}
-                                  >
-                                    {openSub === sub.id ? '收起' : '查看详情'}
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                              {openSub === sub.id && (
-                                <TableRow className="sub-detail-row">
-                                  <TableCell colSpan={6}>
-                                    <div className="sub-detail">
-                                      {subDetail(sub)}
-                                    </div>
+                          {shownUnits.map((u: Any) => {
+                            const best = u.subs
+                              .filter((x: Any) => x.report)
+                              .sort((a: Any, b: Any) => {
+                                const d = (b.report.total || 0) - (a.report.total || 0);
+                                return d !== 0 ? d : b.ordinal - a.ordinal;
+                              })[0];
+                            const stat =
+                              u.subs.length === 0
+                                ? 'none'
+                                : u.subs.some(
+                                      (x: Any) =>
+                                        x.status === 'running' ||
+                                        x.status === 'queued',
+                                    )
+                                  ? 'running'
+                                  : u.subs.some((x: Any) => x.status === 'failed')
+                                    ? 'failed'
+                                    : 'complete';
+                            return (
+                              <Fragment key={u.key}>
+                                <TableRow
+                                  className="sub-row"
+                                  onClick={() =>
+                                    setOpenSub(openSub === u.key ? '' : u.key)
+                                  }
+                                >
+                                  <TableCell>
+                                    <strong>{u.label}</strong>
+                                  </TableCell>
+                                  <TableCell>{u.subs.length}/3</TableCell>
+                                  <TableCell>
+                                    {best ? (
+                                      <strong>{best.report.total}</strong>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    {stat === 'none' ? (
+                                      <span className="tag">未提交</span>
+                                    ) : stat === 'running' ? (
+                                      <span className="tag blue">评分中</span>
+                                    ) : stat === 'failed' ? (
+                                      <span className="tag amber">
+                                        有失败，可重试
+                                      </span>
+                                    ) : (
+                                      <span className="tag green">已完成</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    {u.subs.length > 0 && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenSub(
+                                            openSub === u.key ? '' : u.key,
+                                          );
+                                        }}
+                                      >
+                                        {openSub === u.key ? '收起' : '展开明细'}
+                                      </Button>
+                                    )}
                                   </TableCell>
                                 </TableRow>
-                              )}
-                            </Fragment>
-                          ))}
+                                {openSub === u.key && (
+                                  <TableRow className="sub-detail-row">
+                                    <TableCell colSpan={5}>
+                                      <div className="sub-detail">
+                                        {u.subs.map((sub: Any) => (
+                                          <Fragment key={sub.id}>
+                                            <div className="button-row">
+                                              <span className="tag">
+                                                第 {sub.ordinal} 次
+                                              </span>
+                                              <Status value={sub.status} />
+                                              {sub.report && (
+                                                <strong>
+                                                  {sub.report.total} 分
+                                                  {sub.isBest
+                                                    ? ' · 最高分'
+                                                    : ''}
+                                                </strong>
+                                              )}
+                                              <small className="muted">
+                                                {fmt(sub.created)}
+                                              </small>
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={() =>
+                                                  setOpenSub(
+                                                    openSub === sub.id
+                                                      ? u.key
+                                                      : sub.id,
+                                                  )
+                                                }
+                                              >
+                                                {openSub === sub.id
+                                                  ? '收起详情'
+                                                  : '查看详情'}
+                                              </Button>
+                                            </div>
+                                            {openSub === sub.id && (
+                                              <div className="sub-nested">
+                                                {subDetail(sub)}
+                                              </div>
+                                            )}
+                                          </Fragment>
+                                        ))}
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                )}
+                              </Fragment>
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     )}

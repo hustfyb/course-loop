@@ -182,3 +182,5 @@ tr.sub-row{cursor:pointer}
 tr.sub-row:hover{background:#f6f8fc}
 tr.sub-detail-row>td{background:#f9fafd}
 .sub-detail{padding:10px 6px;display:flex;flex-direction:column;gap:12px}
+
+.sub-nested{border-left:2px solid var(--border);padding:6px 0 6px 14px;display:flex;flex-direction:column;gap:12px}
