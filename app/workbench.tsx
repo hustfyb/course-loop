@@ -2431,11 +2431,38 @@ export default function Workbench() {
                       <div className="appeal-row" key={a.id}>
                         <Status value={a.status} />
                         <div>
+                          {teacher && (
+                            <p className="muted">
+                              {a.userName}
+                              {a.userStudentNo ? `（${a.userStudentNo}）` : ''}{' '}
+                              申诉 ·{' '}
+                              {draft.experiments.find(
+                                (e: Any) => e.id === a.experimentId,
+                              )?.title || a.experimentId}
+                              {' '}第 {a.ordinal} 次 ·{' '}
+                              {a.teamName || '个人提交'}
+                            </p>
+                          )}
                           <p>{a.content}</p>
                           {a.resolution && (
                             <small>处理意见:{a.resolution}</small>
                           )}
                         </div>
+                        {teacher && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setReportExp(a.experimentId);
+                              setBestOnly(false);
+                              setOpenSub(
+                                a.teamId ? 't' + a.teamId : 'u' + a.studentId,
+                              );
+                            }}
+                          >
+                            查看原始作业
+                          </Button>
+                        )}
                         {teacher && a.status === 'open' && (
                           <Button
                             size="sm"
