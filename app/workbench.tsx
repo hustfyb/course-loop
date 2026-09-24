@@ -1,5 +1,11 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  Fragment,
+} from 'react';
 import {
   BookOpen,
   Layers3,
@@ -273,6 +279,127 @@ export default function Workbench() {
     : [];
   const formalUsed = expSubs.length;
   const currentNav = navs.find((n) => n[0] === view) || navs[0];
+  const [reportExp, setReportExp] = useState('');
+  const [bestOnly, setBestOnly] = useState(false);
+  const [openSub, setOpenSub] = useState('');
+  const reportExps: Any[] = draft.experiments || [];
+  const activeReportExp =
+    reportExps.find((e: Any) => e.id === reportExp)?.id ||
+    reportExps.find((e: Any) =>
+      (s.submissions || []).some((x: Any) => x.experimentId === e.id),
+    )?.id ||
+    reportExps[0]?.id ||
+    '';
+  const expReportSubs = (s.submissions || []).filter(
+    (x: Any) => x.experimentId === activeReportExp,
+  );
+  const shownReportSubs = bestOnly
+    ? expReportSubs.filter((x: Any) => x.isBest)
+    : expReportSubs;
+  // 单次提交的评估详情：教师表格展开与学生卡片共用
+  const subDetail = (sub: Any) => (
+    <>
+      <p className="muted">
+        {sub.teamName || sub.members[0]?.name} · 第 {sub.ordinal} 次提交 ·{' '}
+        {fmt(sub.created)} · 快照成员：
+        {sub.members.map((m: Any) => m.name).join('、')}
+      </p>
+      {(sub.status === 'running' || sub.status === 'queued') && (
+        <div className="notice" role="status">
+          <LoaderCircle size={16} className="spin" />
+          <span>
+            {sub.status === 'running'
+              ? '小课正在评分，通常几分钟内出结果；本页会自动刷新。'
+              : '排在评分队列中，轮到后自动开始评分。'}
+          </span>
+        </div>
+      )}
+      {sub.reviewPending && (
+        <div className="notice" role="status">
+          <ShieldCheck size={16} />
+          <span>小课已完成评分，成绩待教师复核发布后即可见。</span>
+        </div>
+      )}
+      {sub.error && <div className="feedback error">{sub.error}</div>}
+      {sub.report ? (
+        <>
+          <div className="score-items">
+            {sub.report.items.map((i: Any) => (
+              <div key={i.id}>
+                <strong>
+                  {draft.experiments
+                    .find((e: Any) => e.id === sub.experimentId)
+                    ?.rubric.find((r: Any) => r.id === i.id)?.title || i.id}
+                  <span>{i.score} 分</span>
+                </strong>
+                <p>{i.reason}</p>
+                <small>证据:{i.evidence.join('；')}</small>
+              </div>
+            ))}
+          </div>
+          {sub.report.limitations?.length > 0 && (
+            <div className="questions">
+              <strong>尚未核验</strong>
+              {sub.report.limitations.map((l: string, i: number) => (
+                <p key={i}>{l}</p>
+              ))}
+            </div>
+          )}
+          {sub.report.suggestions?.length > 0 && (
+            <div className="questions">
+              <strong>改进建议</strong>
+              {sub.report.suggestions.map((sg: string, i: number) => (
+                <p key={i}>{sg}</p>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="muted py-5">
+          {sub.status === 'complete'
+            ? '评分已生成，等待教师复核发布。'
+            : sub.status === 'queued'
+              ? '等待 Pi 连接器领取任务。系统不会生成模拟分数。'
+              : '核验结果将在完成后展示。'}
+        </p>
+      )}
+      <div className="button-row">
+        {sub.fileIds.map((fid: string) => (
+          <a className="file-link" href={'/api/files/' + fid} key={fid}>
+            <Download size={13} />
+            {s.files?.find((f: Any) => f.id === fid)?.name || '提交文件'}
+          </a>
+        ))}
+      </div>
+      <div className="report-actions">
+        {sub.status === 'failed' && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              mutation('job-action', { id: sub.jobId, action: 'retry' })
+            }
+          >
+            重试评分
+          </Button>
+        )}
+        {teacher && sub.report && (
+          <Button size="sm" onClick={() => open('review', { sub })}>
+            {sub.published ? '复核 / 调整' : '复核并发布'}
+          </Button>
+        )}
+        {student && sub.report && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => open('appeal', { submissionId: sub.id })}
+          >
+            对评分提出申诉
+          </Button>
+        )}
+      </div>
+    </>
+  );
   const open = (type: string, data: Any = {}) => {
     setForm({});
     setModal({ type, ...data });
@@ -2000,7 +2127,139 @@ export default function Workbench() {
                     )}
                   </div>
                 </div>
-                {!s.submissions?.length ? (
+                {teacher ? (
+                  <>
+                    <div className="exp-tabs">
+                      {reportExps.map((e: Any) => {
+                        const subs = (s.submissions || []).filter(
+                          (x: Any) => x.experimentId === e.id,
+                        );
+                        const graded = subs.filter((x: Any) => x.report);
+                        const avg = graded.length
+                          ? Math.round(
+                              (graded.reduce(
+                                (n: number, x: Any) => n + (x.report.total || 0),
+                                0,
+                              ) /
+                                graded.length) *
+                                10,
+                            ) / 10
+                          : null;
+                        return (
+                          <button
+                            className={
+                              'exp-tab' +
+                              (e.id === activeReportExp ? ' active' : '')
+                            }
+                            key={e.id}
+                            onClick={() => {
+                              setReportExp(e.id);
+                              setOpenSub('');
+                            }}
+                          >
+                            <strong>{e.title}</strong>
+                            <small>
+                              {subs.length} 次提交
+                              {avg !== null ? ` · 均分 ${avg}` : ''}
+                            </small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="toolbar">
+                      <span className="muted">
+                        {expReportSubs.length} 次提交 · 系统异常不会直接计零分
+                      </span>
+                      <label className="switch-label">
+                        只看最高分
+                        <Switch
+                          checked={!!bestOnly}
+                          onCheckedChange={(v) => setBestOnly(!!v)}
+                        />
+                      </label>
+                    </div>
+                    {shownReportSubs.length === 0 ? (
+                      <Empty
+                        title="该实验还没有提交"
+                        body="学生上传作业成果后，列表和评分会出现在这里。"
+                      />
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>小组 / 学生</TableHead>
+                            <TableHead>次数</TableHead>
+                            <TableHead>提交时间</TableHead>
+                            <TableHead>状态</TableHead>
+                            <TableHead>分数</TableHead>
+                            <TableHead></TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {shownReportSubs.map((sub: Any) => (
+                            <Fragment key={sub.id}>
+                              <TableRow
+                                className="sub-row"
+                                onClick={() =>
+                                  setOpenSub(openSub === sub.id ? '' : sub.id)
+                                }
+                              >
+                                <TableCell>
+                                  <strong>
+                                    {sub.teamName || sub.members[0]?.name}
+                                  </strong>
+                                </TableCell>
+                                <TableCell>
+                                  第 {sub.ordinal} 次
+                                  {sub.superseded ? ' · 旧' : ''}
+                                </TableCell>
+                                <TableCell>{fmt(sub.created)}</TableCell>
+                                <TableCell>
+                                  <Status value={sub.status} />
+                                </TableCell>
+                                <TableCell>
+                                  {sub.report ? (
+                                    <strong>
+                                      {sub.report.total}
+                                      {sub.isBest ? ' · 最高分' : ''}
+                                    </strong>
+                                  ) : sub.reviewPending ? (
+                                    '待发布'
+                                  ) : (
+                                    '—'
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenSub(
+                                        openSub === sub.id ? '' : sub.id,
+                                      );
+                                    }}
+                                  >
+                                    {openSub === sub.id ? '收起' : '查看详情'}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                              {openSub === sub.id && (
+                                <TableRow className="sub-detail-row">
+                                  <TableCell colSpan={6}>
+                                    <div className="sub-detail">
+                                      {subDetail(sub)}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </Fragment>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </>
+                ) : !s.submissions?.length ? (
                   <Empty
                     title="还没有提交记录"
                     body="小组上传作业成果后，核验进度和分项反馈会出现在这里。"
@@ -2010,173 +2269,59 @@ export default function Workbench() {
                     </Button>
                   </Empty>
                 ) : (
-                  <div className="report-list">
-                    {s.submissions.map((sub: Any) => (
-                      <section className="panel report-card" key={sub.id}>
-                        <div className="section-heading">
-                          <div>
-                            <div className="button-row">
-                              <span className="tag">
-                                第 {sub.ordinal} 次提交
-                                {sub.superseded ? ' · 已被替代' : ''}
-                              </span>
-                              {sub.isBest && (
-                                <span className="tag green">最佳成绩</span>
-                              )}
-                              <Status value={sub.status} />
-                            </div>
-                            <h2>
-                              {draft.experiments.find(
-                                (e: Any) => e.id === sub.experimentId,
-                              )?.title || sub.experimentId}
-                            </h2>
-                            <p className="muted">
-                              {sub.teamName || sub.members[0]?.name} ·{' '}
-                              {fmt(sub.created)} · 快照成员：
-                              {sub.members.map((m: Any) => m.name).join('、')}
-                            </p>
-                          </div>
-                          <div className="score">
-                            {sub.report
-                              ? sub.report.total
-                              : sub.reviewPending
-                                ? '待发布'
-                                : '—'}
-                            <small>
-                              /{' '}
-                              {draft.experiments
-                                .find((e: Any) => e.id === sub.experimentId)
-                                ?.rubric.reduce(
-                                  (n: number, r: Any) => n + r.max,
-                                  0,
-                                ) || 100}
-                            </small>
-                          </div>
-                        </div>
-                        {(sub.status === 'running' ||
-                          sub.status === 'queued') && (
-                          <div className="notice" role="status">
-                            <LoaderCircle size={16} className="spin" />
-                            <span>
-                              {sub.status === 'running'
-                                ? '小课正在评分，通常几分钟内出结果；本页会自动刷新。'
-                                : '排在评分队列中，轮到后自动开始评分。'}
-                            </span>
-                          </div>
-                        )}
-                        {sub.reviewPending && (
-                          <div className="notice" role="status">
-                            <ShieldCheck size={16} />
-                            <span>
-                              小课已完成评分，成绩待教师复核发布后即可见。
-                            </span>
-                          </div>
-                        )}
-                        {sub.error && (
-                          <div className="feedback error">{sub.error}</div>
-                        )}
-                        {sub.report ? (
-                          <>
-                            <div className="score-items">
-                              {sub.report.items.map((i: Any) => (
-                                <div key={i.id}>
-                                  <strong>
-                                    {draft.experiments
-                                      .find(
-                                        (e: Any) => e.id === sub.experimentId,
-                                      )
-                                      ?.rubric.find((r: Any) => r.id === i.id)
-                                      ?.title || i.id}
-                                    <span>{i.score} 分</span>
-                                  </strong>
-                                  <p>{i.reason}</p>
-                                  <small>证据:{i.evidence.join('；')}</small>
+                  reportExps.map((e: Any) => {
+                    const subs = (s.submissions || []).filter(
+                      (x: Any) => x.experimentId === e.id,
+                    );
+                    if (!subs.length) return null;
+                    return (
+                      <section key={e.id} className="report-group">
+                        <h2 className="report-group-title">{e.title}</h2>
+                        <div className="report-list">
+                          {subs.map((sub: Any) => (
+                            <section className="panel report-card" key={sub.id}>
+                              <div className="section-heading">
+                                <div>
+                                  <div className="button-row">
+                                    <span className="tag">
+                                      第 {sub.ordinal} 次提交
+                                      {sub.superseded ? ' · 已被替代' : ''}
+                                    </span>
+                                    {sub.isBest && (
+                                      <span className="tag green">最佳成绩</span>
+                                    )}
+                                    <Status value={sub.status} />
+                                  </div>
+                                  <p className="muted">
+                                    {sub.teamName || sub.members[0]?.name}
+                                  </p>
                                 </div>
-                              ))}
-                            </div>
-                            {sub.report.limitations?.length > 0 && (
-                              <div className="questions">
-                                <strong>尚未核验</strong>
-                                {sub.report.limitations.map(
-                                  (l: string, i: number) => (
-                                    <p key={i}>{l}</p>
-                                  ),
-                                )}
+                                <div className="score">
+                                  {sub.report
+                                    ? sub.report.total
+                                    : sub.reviewPending
+                                      ? '待发布'
+                                      : '—'}
+                                  <small>
+                                    /{' '}
+                                    {draft.experiments
+                                      .find((x: Any) => x.id === sub.experimentId)
+                                      ?.rubric.reduce(
+                                        (n: number, r: Any) => n + r.max,
+                                        0,
+                                      ) || 100}
+                                  </small>
+                                </div>
                               </div>
-                            )}
-                            {sub.report.suggestions?.length > 0 && (
-                              <div className="questions">
-                                <strong>改进建议</strong>
-                                {sub.report.suggestions.map(
-                                  (sg: string, i: number) => (
-                                    <p key={i}>{sg}</p>
-                                  ),
-                                )}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p className="muted py-5">
-                            {sub.status === 'complete'
-                              ? '评分已生成，等待教师复核发布。'
-                              : sub.status === 'queued'
-                                ? '等待 Pi 连接器领取任务。系统不会生成模拟分数。'
-                                : '核验结果将在完成后展示。'}
-                          </p>
-                        )}
-                        <div className="button-row">
-                          {sub.fileIds.map((fid: string) => (
-                            <a
-                              className="file-link"
-                              href={'/api/files/' + fid}
-                              key={fid}
-                            >
-                              <Download size={13} />
-                              {s.files?.find((f: Any) => f.id === fid)?.name ||
-                                '提交文件'}
-                            </a>
+                              {subDetail(sub)}
+                            </section>
                           ))}
                         </div>
-                        <div className="report-actions">
-                          {sub.status === 'failed' && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                mutation('job-action', {
-                                  id: sub.jobId,
-                                  action: 'retry',
-                                })
-                              }
-                            >
-                              重试评分
-                            </Button>
-                          )}
-                          {teacher && sub.report && (
-                            <Button
-                              size="sm"
-                              onClick={() => open('review', { sub })}
-                            >
-                              {sub.published ? '复核 / 调整' : '复核并发布'}
-                            </Button>
-                          )}
-                          {student && sub.report && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                open('appeal', { submissionId: sub.id })
-                              }
-                            >
-                              对评分提出申诉
-                            </Button>
-                          )}
-                        </div>
                       </section>
-                    ))}
-                  </div>
+                    );
+                  })
                 )}
-                {s.appeals?.length > 0 && (
+                                {s.appeals?.length > 0 && (
                   <section className="panel data-panel">
                     <h2>申诉与复核记录</h2>
                     {s.appeals.map((a: Any) => (

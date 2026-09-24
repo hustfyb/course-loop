@@ -170,3 +170,15 @@ button.text-action{background:none;border:0;padding:0;height:auto;display:inline
 .submit-status>strong{font-size:13px;color:#34445e}
 .submit-status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .submit-status-row>strong{color:#34445e;font-weight:600}
+
+/* 作业评估：实验切换与提交列表 */
+.exp-tabs{display:flex;gap:9px;flex-wrap:wrap;margin:2px 0 16px}
+.exp-tab{display:flex;flex-direction:column;gap:2px;text-align:left;background:white;border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer}
+.exp-tab.active{border-color:#4b72f2;box-shadow:0 0 0 2px rgba(75,114,242,.14)}
+.exp-tab strong{font-size:13px;font-weight:600;color:#34445e}
+.exp-tab small{font-size:11px;color:#8fa3c1}
+.report-group-title{margin:20px 2px 10px;font-size:15px;color:#34445e;font-weight:600}
+tr.sub-row{cursor:pointer}
+tr.sub-row:hover{background:#f6f8fc}
+tr.sub-detail-row>td{background:#f9fafd}
+.sub-detail{padding:10px 6px;display:flex;flex-direction:column;gap:12px}
