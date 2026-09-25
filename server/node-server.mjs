@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import {existsSync,mkdirSync} from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -35,6 +36,8 @@ function piSpec(command){return {command,args:[],shell:process.platform==='win32
 // 失败时返回截断的错误摘要（provider 未配置等原样保留）。
 export async function probePi(spec,{cwd,timeoutMs=60000}={}){try{const r=await runPiPrint(spec,{cwd:cwd||process.cwd(),prompt:'请只回复 ok',timeoutMs,tools:false});return String(r.text||'').trim()?{ok:true}:{ok:false,error:'Pi 探测未返回内容'};}catch(e){return {ok:false,error:String(e?.message||e).slice(0,300)};}}
 // lib/service.ts 是 TypeScript：启动时转译到数据目录缓存后 import（与 tests/service.test.mjs 同法）。
+// 读取 Pi 的模型目录（~/.pi/agent/models.json）：providers→models 映射；文件允许尾逗号（Pi 自身宽容解析）。
+export async function loadPiCatalog(homeDir){try{const raw=await fs.readFile(path.join(homeDir,'.pi','agent','models.json'),'utf8');const cleaned=raw.replace(/,\s*([}\]])/g,'$1');const d=JSON.parse(cleaned);const out=[];for(const [provider,p] of Object.entries(d.providers||{})){for(const m of p.models||[]){if(m?.id)out.push({provider,id:m.id,name:m.name||m.id});}}return out;}catch{return [];}}
 export async function loadApi(cacheDir){await fs.mkdir(cacheDir,{recursive:true});for(const name of ['domain','seed','service']){let src=await fs.readFile(path.join(root,'lib',name+'.ts'),'utf8');src=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replaceAll("'./seed'","'./seed.mjs'").replaceAll("'./domain'","'./domain.mjs'");await fs.writeFile(path.join(cacheDir,name+'.mjs'),src);}return (await import(pathToFileURL(path.join(cacheDir,'service.mjs')).href+'?t='+Date.now())).api;}
 export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'data'),env=process.env,pathEnv,pollIntervalMs=2000,scanIntervalMs=60000,probeTimeoutMs=60000,clientDir=path.join(root,'dist','client'),serverEntry=path.join(root,'dist','server','index.js'),drizzleDir=path.join(root,'drizzle'),log=console.log}={}){
  port=port??Number(env.PORT||7100);
@@ -70,7 +73,7 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
   const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // 同目录依赖（如 node）随 pi 一并可达
   const probe=await probePi(found,{cwd:workRoot,timeoutMs:probeTimeoutMs});
   const argVal=(name)=>{const i=found.args.indexOf(name);return i>=0&&found.args[i+1]?found.args[i+1]:null;};
-  const piInfo={piMode:'local',piCommand:found.command,...(argVal('--provider')?{piProvider:argVal('--provider')}:{}),...(argVal('--model')?{piModel:argVal('--model')}:{}),piModelLock:dbModel?'settings':(argVal('--model')?'env':'default')};
+  const piInfo={piMode:'local',piCommand:found.command,...(argVal('--provider')?{piProvider:argVal('--provider')}:{}),...(argVal('--model')?{piModel:argVal('--model')}:{}),piModelLock:dbModel?'settings':(argVal('--model')?'env':'default'),piCatalog:await loadPiCatalog(os.homedir())};
   if(probe.ok){piState.spec=found;piState.error=null;updateHealth({acpFound:true,acpAt:Date.now(),acpError:null,...piInfo});}
   else{piState.spec=null;piState.error=probe.error;updateHealth({acpFound:true,acpError:probe.error,...piInfo});}}
  await scan();

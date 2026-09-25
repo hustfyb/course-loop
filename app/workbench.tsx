@@ -205,10 +205,12 @@ function NativeFileInput({ inputRef, onPick, accept, visible }: Any) {
 // 小课模型选择：输入框 + 自绘下拉（原生 datalist 弹层在部分环境不可控）
 function PiModelPicker({
   models,
+  catalog,
   current,
   onApply,
 }: {
   models: string[];
+  catalog: { provider: string; id: string; name: string }[];
   current: string;
   onApply: (m: string) => void;
 }) {
@@ -224,9 +226,16 @@ function PiModelPicker({
     return () => document.removeEventListener('mousedown', h);
   }, []);
   const trimmed = text.trim();
-  const list = Array.from(
-    new Set([...models, ...(trimmed ? [trimmed] : [])]),
-  ).slice(0, 20);
+  // Pi 配置文件里的模型优先（真实可用），其后是历史使用过的模型与手输项
+  const known: { id: string; name: string }[] = [
+    ...catalog.map((c) => ({ id: c.id, name: c.name })),
+    ...models
+      .filter((m) => !catalog.some((c) => c.id === m))
+      .map((m) => ({ id: m, name: '' })),
+  ];
+  if (trimmed && !known.some((k) => k.id === trimmed))
+    known.unshift({ id: trimmed, name: '' });
+  const list = known.slice(0, 20);
   return (
     <div className="pi-model-set" ref={ref}>
       <div className="pi-model-input">
@@ -251,15 +260,18 @@ function PiModelPicker({
             {list.map((m) => (
               <button
                 type="button"
-                key={m}
+                key={m.id}
                 onClick={() => {
-                  onApply(m);
+                  onApply(m.id);
                   setText('');
                   setOpen(false);
                 }}
               >
-                {m}
-                {m === current && <span>当前</span>}
+                {m.id}
+                {m.name && m.name !== m.id && (
+                  <small className="muted">{m.name}</small>
+                )}
+                {m.id === current && <span>当前</span>}
               </button>
             ))}
           </div>
@@ -2645,6 +2657,7 @@ export default function Workbench() {
                         </div>
                         <PiModelPicker
                           models={s.health?.piModels || []}
+                          catalog={s.health?.piCatalog || []}
                           current={s.health?.piModel || ''}
                           onApply={(m) =>
                             act(async () => {

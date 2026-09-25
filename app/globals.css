@@ -200,3 +200,4 @@ tr.sub-detail-row>td{padding:0 14px;white-space:normal}
 .pi-model-menu>button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:9px 12px;font-size:13px;color:#34445e;background:none;border:none;cursor:pointer}
 .pi-model-menu>button:hover{background:#f2f6ff}
 .pi-model-menu span{font-size:11px;color:#3b8a5c}
+.pi-model-menu>button small{margin-left:8px;font-size:11px}
