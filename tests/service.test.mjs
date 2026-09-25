@@ -304,6 +304,13 @@ test('primary class: 管理员设置主课堂，其截止时间对本课程全�
  assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'清除主课堂后按本课堂过期截止时间拦截');
  // 管理员快照标记主课堂
  const as=(await req(x,'state',undefined,a.cookie)).data;assert.equal(as.primaryClassId,null);});
+test('pi config: connector_health 的 Pi 配置字段透传到管理员快照',async()=>{const x=await init();const a=await login(x,'admin@example.com');
+ x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({acpAt:Date.now(),piMode:'local',piCommand:'C:\bin\pi.cmd',piProvider:'carbit',piModel:'qwen38-nvfp4',piModelLock:'1'}));
+ const h=(await req(x,'state',undefined,a.cookie)).data.health;
+ assert.equal(h.piMode,'local');assert.equal(h.piCommand,'C:\bin\pi.cmd');assert.equal(h.piProvider,'carbit');assert.equal(h.piModel,'qwen38-nvfp4');
+ // 未写入时为 null（连接器部署场景前端据此显示连接器模式）
+ const x2=await init();const a2=await login(x2,'admin@example.com');
+ const h2=(await req(x2,'state',undefined,a2.cookie)).data.health;assert.equal(h2.piMode,null);});
 test('upload size cap: 学生作业单文件 5MB 上限，课程素材保持 20MB',async()=>{const x=await init();const {a,kid,code}=await classroom(x);
  const s1=await login(x,'cap@example.com');await req(x,'join',{code},s1.cookie);
  // 学生上传 5MB+1 字节 → 400 明确提示

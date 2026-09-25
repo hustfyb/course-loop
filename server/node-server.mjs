@@ -65,8 +65,10 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
   if(piArgs.length)found.args=[...piArgs,...(found.args||[])];
   const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // 同目录依赖（如 node）随 pi 一并可达
   const probe=await probePi(found,{cwd:workRoot,timeoutMs:probeTimeoutMs});
-  if(probe.ok){piState.spec=found;piState.error=null;updateHealth({acpFound:true,acpAt:Date.now(),acpError:null});}
-  else{piState.spec=null;piState.error=probe.error;updateHealth({acpFound:true,acpError:probe.error});}}
+  const argVal=(name)=>{const i=piArgs.indexOf(name);return i>=0&&piArgs[i+1]?piArgs[i+1]:null;};
+  const piInfo={piMode:'local',piCommand:found.command,...(argVal('--provider')?{piProvider:argVal('--provider')}:{}),...(argVal('--model')?{piModel:argVal('--model')}:{}),...(argVal('--model')&&argVal('--provider')?{piModelLock:'1'}:{})};
+  if(probe.ok){piState.spec=found;piState.error=null;updateHealth({acpFound:true,acpAt:Date.now(),acpError:null,...piInfo});}
+  else{piState.spec=null;piState.error=probe.error;updateHealth({acpFound:true,acpError:probe.error,...piInfo});}}
  await scan();
  const scanTimer=scanIntervalMs>0?setInterval(()=>{scan().catch(()=>{})},scanIntervalMs):null;
  scanTimer?.unref?.();

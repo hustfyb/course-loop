@@ -2535,6 +2535,39 @@ export default function Workbench() {
                       s.health?.online && s.health?.acp ? 'complete' : 'queued'
                     }
                   />
+                  <div className="pi-config">
+                    <div className="account-row">
+                      <strong>运行方式</strong>
+                      <span>
+                        {s.health?.piMode === 'local'
+                          ? '本机直连：服务器进程内直接执行评分与对话任务，无需连接器'
+                          : '连接器模式：由独立连接器进程轮询执行（Cloudflare Sites 部署）'}
+                      </span>
+                    </div>
+                    {s.health?.piMode === 'local' && (
+                      <>
+                        <div className="account-row">
+                          <strong>Pi 程序</strong>
+                          <span>
+                            <code>{s.health?.piCommand || '未找到'}</code>
+                          </span>
+                        </div>
+                        <div className="account-row">
+                          <strong>模型</strong>
+                          <span>
+                            {s.health?.piProvider ? (
+                              <code>
+                                {s.health.piProvider} /{' '}
+                                {s.health.piModel || '默认'}
+                              </code>
+                            ) : (
+                              'Pi 默认配置（未通过 PI_ARGS 锁定）'
+                            )}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   {s.health?.acpError && (
                     <div className="feedback error">{s.health.acpError}</div>
                   )}
