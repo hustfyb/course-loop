@@ -111,7 +111,7 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  }catch(e){if(!res.headersSent)res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({error:String(e?.message||e)}));}});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve);});
  const actualPort=server.address().port;
- const runner=startRunner({baseUrl:`http://127.0.0.1:${actualPort}`,token,acp:()=>piState.spec,sendMail,workRoot,pollIntervalMs,log,errorLog:log});
+ const runner=startRunner({baseUrl:`http://127.0.0.1:${actualPort}`,token,acp:()=>piState.spec,sendMail,workRoot,pollIntervalMs,getConcurrency:()=>Number(sqlite.prepare("SELECT value FROM settings WHERE key='pi_concurrency'").get()?.value)||1,log,errorLog:log});
  log(`课序服务器已启动：http://localhost:${actualPort}/`);
  log(`数据目录：${dataDir}`);
  log(`Pi 扫描：${piState.spec?piState.spec.command+'（探测通过）':'未连接'+(piState.error?'：'+piState.error:'')}`);

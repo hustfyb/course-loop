@@ -42,7 +42,7 @@ export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=
  }catch(e){errorLog('连接暂不可用：',String(e.message).slice(0,180));await new Promise(r=>setTimeout(r,10000));}}
  acpWorkers.delete(self);}
  // 并发 worker 池：定期把 acp worker 数量调到目标并发（扩容立即拉起，缩容由超额 worker 完成当前任务后自行退出）
- const spawnLoop=()=>{const w={};acpWorkers.add(w);processLoop('acp',w).catch(()=>{});};
+ const spawnLoop=()=>{const w={};acpWorkers.add(w);log('评分 worker 扩容，池大小',acpWorkers.size);processLoop('acp',w).catch(()=>{});};
  const acpReady=()=>dynamicAcp||!!getAcp();
  const adjust=()=>{if(!acpReady())return;let guard=16;while(acpWorkers.size<desiredConcurrency()&&guard-->0)spawnLoop();};
  const initial={};acpWorkers.add(initial);
