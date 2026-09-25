@@ -202,6 +202,84 @@ function NativeFileInput({ inputRef, onPick, accept, visible }: Any) {
     />
   );
 }
+// 小课模型选择：输入框 + 自绘下拉（原生 datalist 弹层在部分环境不可控）
+function PiModelPicker({
+  models,
+  current,
+  onApply,
+}: {
+  models: string[];
+  current: string;
+  onApply: (m: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const trimmed = text.trim();
+  const list = Array.from(
+    new Set([...models, ...(trimmed ? [trimmed] : [])]),
+  ).slice(0, 20);
+  return (
+    <div className="pi-model-set" ref={ref}>
+      <div className="pi-model-input">
+        <Input
+          placeholder="输入或从下拉选择模型名"
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+        />
+        <button
+          type="button"
+          aria-label="展开模型列表"
+          onClick={() => setOpen(!open)}
+        >
+          <ChevronDown size={14} />
+        </button>
+        {open && list.length > 0 && (
+          <div className="pi-model-menu">
+            {list.map((m) => (
+              <button
+                type="button"
+                key={m}
+                onClick={() => {
+                  onApply(m);
+                  setText('');
+                  setOpen(false);
+                }}
+              >
+                {m}
+                {m === current && <span>当前</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={!trimmed}
+        onClick={() => {
+          onApply(trimmed);
+          setText('');
+          setOpen(false);
+        }}
+      >
+        应用模型
+      </Button>
+    </div>
+  );
+}
 export default function Workbench() {
   const [s, setS] = useState<Any>({ user: null, courses: [], classes: [] });
   const [loaded, setLoaded] = useState(false);
@@ -280,7 +358,6 @@ export default function Workbench() {
     : [];
   const formalUsed = expSubs.length;
   const currentNav = navs.find((n) => n[0] === view) || navs[0];
-  const [modelInput, setModelInput] = useState('');
   const [reportExp, setReportExp] = useState('');
   const [bestOnly, setBestOnly] = useState(false);
   const [openSub, setOpenSub] = useState('');
@@ -2566,37 +2643,18 @@ export default function Workbench() {
                             )}
                           </span>
                         </div>
-                        <div className="pi-model-set">
-                          <Input
-                            list="pi-model-options"
-                            placeholder="输入或从下拉选择模型名"
-                            value={modelInput}
-                            onChange={(e) => setModelInput(e.target.value)}
-                          />
-                          <datalist id="pi-model-options">
-                            {(s.health?.piModels || []).map((m: string) => (
-                              <option value={m} key={m} />
-                            ))}
-                          </datalist>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={busy || !modelInput.trim()}
-                            onClick={() =>
-                              act(async () => {
-                                await call('pi-model', {
-                                  model: modelInput.trim(),
-                                });
-                                setModelInput('');
-                                setNotice(
-                                  '模型已保存，小课正在用新模型重新探测，通过后立即生效（provider 保持不变）',
-                                );
-                              })
-                            }
-                          >
-                            应用模型
-                          </Button>
-                        </div>
+                        <PiModelPicker
+                          models={s.health?.piModels || []}
+                          current={s.health?.piModel || ''}
+                          onApply={(m) =>
+                            act(async () => {
+                              await call('pi-model', { model: m });
+                              setNotice(
+                                '模型已保存，小课正在用新模型重新探测，通过后立即生效（provider 保持不变）',
+                              );
+                            })
+                          }
+                        />
                         <small className="muted">
                           下拉列出最近用过的模型，也可以直接输入新名称。应用后约
                           1 分钟内完成探测切换；provider 保持不变。
