@@ -19,7 +19,7 @@ export function promptFor(job,docs){const p=job.payload;let contract;
 export function parseResultJson(text){const t=String(text||'').trim();try{return JSON.parse(t);}catch{}const fenced=t.match(/```(?:json)?\s*([\s\S]*?)```/);if(fenced)try{return JSON.parse(fenced[1].trim());}catch{}const i=t.indexOf('{');const j=t.lastIndexOf('}');if(i>=0&&j>i)return JSON.parse(t.slice(i,j+1));throw Error('no json');}
 // acp：{command,args?,shell?} 静态对象，或 ()=>({command,args?,shell?}|null) 动态探测函数（返回 null 表示暂不可用）。
 // sendMail：async ({to,subject,text})=>void；为 null 时不声明邮件能力。
-export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=null,workRoot,pollIntervalMs=5000,taskTimeoutMs=600000,log=console.log,errorLog=console.error}){
+export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=null,workRoot,pollIntervalMs=5000,taskTimeoutMs=1200000,log=console.log,errorLog=console.error}){
  if(!baseUrl)throw Error('runner 缺少 baseUrl');if(!token)throw Error('runner 缺少 token');if(!workRoot)throw Error('runner 缺少 workRoot');
  const accessHeaders=siteAccessToken?{'OAI-Sites-Authorization':'Bearer '+siteAccessToken}:{};
  const dynamicAcp=typeof acp==='function';const getAcp=dynamicAcp?acp:()=>acp;

@@ -18,7 +18,7 @@ const runner=startRunner({
  sendMail:mail?async(m)=>{await mail.sendMail({from:config.smtp.from,...m});}:null,
  workRoot:path.resolve(here,config.workRoot||'work'),
  pollIntervalMs:config.pollIntervalMs||5000,
- taskTimeoutMs:config.taskTimeoutMs||600000,
+ taskTimeoutMs:config.taskTimeoutMs||1200000,
 });
 process.on('SIGINT',()=>runner.stop());process.on('SIGTERM',()=>runner.stop());
 await runner.done;
