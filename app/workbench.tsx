@@ -519,6 +519,16 @@ export default function Workbench() {
             {sub.published ? '复核 / 调整' : '复核并发布'}
           </Button>
         )}
+        {teacher && sub.report && sub.status === 'complete' && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => open('regrade', { submissionId: sub.id })}
+          >
+            <RefreshCw size={13} />
+            重新评估
+          </Button>
+        )}
         {student && sub.report && (
           <Button
             size="sm"
@@ -2936,6 +2946,7 @@ export default function Workbench() {
                     teamConfirm: '确认成员变更',
                     publish: '确认发布课程',
                     formal: '确认提交作业',
+                    regrade: '重新评估这份作业',
                     appeal: '对评分提出申诉',
                     review: '复核与成绩发布',
                     pair: '生成连接器凭据',
@@ -3549,6 +3560,30 @@ export default function Workbench() {
                 }
               >
                 保存并发布成绩
+              </Button>
+            </>
+          )}
+          {modal?.type === 'regrade' && (
+            <>
+              <p>
+                将让小课按当前评分标准对这份提交重新评分。完成后会
+                <strong>替换当前成绩</strong>（包括你在复核中手动调整的分数），
+                并照常立即发布。
+              </p>
+              <p className="muted">
+                如果只是想微调分数，使用「复核 / 调整」更合适。
+              </p>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  mutation(
+                    'grade-retry',
+                    { submissionId: modal.submissionId },
+                    '已发起重新评估，小课正在评分',
+                  )
+                }
+              >
+                发起重新评估
               </Button>
             </>
           )}

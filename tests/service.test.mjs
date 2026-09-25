@@ -330,3 +330,23 @@ test('pi-model: admin 保存模型并维护历史列表，非 admin 403，空名
  assert.deepEqual(r2.data.models,['qwen3-235b','qwen38-nvfp4']);
  assert.equal(x.sqlite.prepare("SELECT value FROM settings WHERE key='pi_model'").get().value,'qwen3-235b');
  const st=(await req(x,'state',undefined,a.cookie)).data;assert.deepEqual(st.health.piModels,['qwen3-235b','qwen38-nvfp4']);});
+test('grade-retry: 教师重评生成新任务，upsert 替换成绩；学生 403；进行中 409',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'rg@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'重评组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ let j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;const rubric=j.payload.experiment.rubric;
+ // 第一次评分：满分
+ assert.equal((await req(x,'connector/finish/'+j.id,{result:{items:rubric.map(r=>({id:r.id,score:r.max,reason:'达成',evidence:['a.md:1']}))}},'',{...headers,'x-job-lease':j.lease})).status,200);
+ assert.equal((await req(x,'state',undefined,s1.cookie)).data.submissions[0].report.total,100);
+ // 学生无权重评
+ assert.equal((await req(x,'grade-retry',{submissionId:(await req(x,'state',undefined,s1.cookie)).data.submissions[0].id},s1.cookie)).status,403);
+ // 教师重评 → 新任务
+ const sid=(await req(x,'state',undefined,s1.cookie)).data.submissions[0].id;
+ const rt=await req(x,'grade-retry',{submissionId:sid},t.cookie);assert.equal(rt.status,200,JSON.stringify(rt.data));assert.ok(rt.data.jobId);
+ // 进行中再发 → 409
+ assert.equal((await req(x,'grade-retry',{submissionId:sid},t.cookie)).status,409);
+ // 新任务评低分（raw 10 → 映射 64）→ upsert 替换同一行
+ j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(j.payload.submissionId,sid);
+ assert.equal((await req(x,'connector/finish/'+j.id,{result:{items:rubric.map((r,i)=>({id:r.id,score:i===0?10:0,reason:'未达成',evidence:['a.md:1']}))}},'',{...headers,'x-job-lease':j.lease})).status,200);
+ const g=x.sqlite.prepare('SELECT report,published,updated FROM grades WHERE submissionId=?').get(sid);assert.equal(JSON.parse(g.report).total,64);assert.equal(g.published,1);
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM grades WHERE submissionId=?').get(sid).n,1,'upsert 不产生重复行');});
