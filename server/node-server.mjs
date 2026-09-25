@@ -43,7 +43,7 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  await migrate(sqlite,drizzleDir);
  const filesDir=path.join(dataDir,'files');const workRoot=path.join(dataDir,'agent-work');mkdirSync(workRoot,{recursive:true});
  const api=await loadApi(path.join(dataDir,'.modules'));
- const platform={DB:wrapD1(sqlite),FILES:localFiles(filesDir),ADMIN_EMAILS:env.ADMIN_EMAILS||'',LOCAL_DEV:env.LOCAL_DEV||'',DEV_EMAIL_CODE:env.DEV_EMAIL_CODE||''};
+ const platform={DB:wrapD1(sqlite),FILES:localFiles(filesDir),ADMIN_EMAILS:env.ADMIN_EMAILS||'',LOCAL_DEV:env.LOCAL_DEV||'',DEV_EMAIL_CODE:env.DEV_EMAIL_CODE||'',piRescan:()=>scan().catch(()=>{})};
  const readHealth=()=>{const row=sqlite.prepare("SELECT value FROM settings WHERE key='connector_health'").get();return row?JSON.parse(row.value):{};};
  const updateHealth=(patch)=>sqlite.prepare("INSERT INTO settings VALUES('connector_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({...readHealth(),...patch}));
  // 进程内 runner 凭据：启动时生成并覆盖写 settings.connector_token（与 pair 端点同格式；自托管模式下 pair 无意义）。
@@ -62,11 +62,15 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  Object.defineProperty(platform,'runAssist',{enumerable:true,get:()=>piState.spec?async(prompt)=>{const dir=path.join(workRoot,'assist',crypto.randomUUID());await fs.mkdir(dir,{recursive:true});const r=await runPiPrint(piState.spec,{cwd:dir,prompt:agentIdentity+'\n\n'+prompt,tools:false,timeoutMs:90000});return r.text;}:undefined});
  async function scan(){const found=await findPi({pathEnv:pathEnv??env.PATH,explicit:env.PI_COMMAND});
   if(!found){piState.spec=null;piState.error='未在本机 PATH 找到 pi，请先安装 Pi（npm install -g @earendil-works/pi-coding-agent）';updateHealth({acpFound:false,acpError:null});return;}
-  if(piArgs.length)found.args=[...piArgs,...(found.args||[])];
+  // 参数拼接：PI_ARGS 铺底；管理员在设置页选择的模型（settings.pi_model）覆盖 --model，provider 不动
+  const dbModel=sqlite.prepare("SELECT value FROM settings WHERE key='pi_model'").get()?.value||null;
+  const args=[...piArgs,...(found.args||[])];
+  if(dbModel){const i=args.indexOf('--model');if(i>=0&&args[i+1]!==undefined)args[i+1]=dbModel;else args.push('--model',dbModel);}
+  found.args=args;
   const binDir=path.dirname(found.command);if(!process.env.PATH?.split(path.delimiter).includes(binDir))process.env.PATH=binDir+path.delimiter+(process.env.PATH||''); // 同目录依赖（如 node）随 pi 一并可达
   const probe=await probePi(found,{cwd:workRoot,timeoutMs:probeTimeoutMs});
-  const argVal=(name)=>{const i=piArgs.indexOf(name);return i>=0&&piArgs[i+1]?piArgs[i+1]:null;};
-  const piInfo={piMode:'local',piCommand:found.command,...(argVal('--provider')?{piProvider:argVal('--provider')}:{}),...(argVal('--model')?{piModel:argVal('--model')}:{}),...(argVal('--model')&&argVal('--provider')?{piModelLock:'1'}:{})};
+  const argVal=(name)=>{const i=found.args.indexOf(name);return i>=0&&found.args[i+1]?found.args[i+1]:null;};
+  const piInfo={piMode:'local',piCommand:found.command,...(argVal('--provider')?{piProvider:argVal('--provider')}:{}),...(argVal('--model')?{piModel:argVal('--model')}:{}),piModelLock:dbModel?'settings':(argVal('--model')?'env':'default')};
   if(probe.ok){piState.spec=found;piState.error=null;updateHealth({acpFound:true,acpAt:Date.now(),acpError:null,...piInfo});}
   else{piState.spec=null;piState.error=probe.error;updateHealth({acpFound:true,acpError:probe.error,...piInfo});}}
  await scan();

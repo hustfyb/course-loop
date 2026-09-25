@@ -322,3 +322,11 @@ test('upload size cap: 学生作业单文件 5MB 上限，课程素材保持 20M
  // 课程素材 6MB → 仍按 20MB 上限放行
  const mat=new FormData();mat.set('courseId',(await req(x,'state',undefined,a.cookie)).data.courses[0].id);mat.set('file',new File([new Uint8Array(6*1024*1024)],'素材.zip'));
  assert.equal((await req(x,'upload',mat,a.cookie)).status,200,JSON.stringify((await req(x,'upload',mat,a.cookie)).data));});
+test('pi-model: admin 保存模型并维护历史列表，非 admin 403，空名 400，快照透传 piModels',async()=>{const x=await init();const a=await login(x,'admin@example.com');const t=await login(x,'t@example.com','teacher');
+ assert.equal((await req(x,'pi-model',{model:'qwen3-32b'},t.cookie)).status,403);
+ assert.equal((await req(x,'pi-model',{model:'  '},a.cookie)).status,400);
+ const r1=await req(x,'pi-model',{model:'qwen38-nvfp4'},a.cookie);assert.equal(r1.status,200);
+ const r2=await req(x,'pi-model',{model:'qwen3-235b'},a.cookie);assert.equal(r2.status,200,JSON.stringify(r2.data));
+ assert.deepEqual(r2.data.models,['qwen3-235b','qwen38-nvfp4']);
+ assert.equal(x.sqlite.prepare("SELECT value FROM settings WHERE key='pi_model'").get().value,'qwen3-235b');
+ const st=(await req(x,'state',undefined,a.cookie)).data;assert.deepEqual(st.health.piModels,['qwen3-235b','qwen38-nvfp4']);});
