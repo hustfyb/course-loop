@@ -304,3 +304,14 @@ test('primary class: 管理员设置主课堂，其截止时间对本课程全�
  assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'清除主课堂后按本课堂过期截止时间拦截');
  // 管理员快照标记主课堂
  const as=(await req(x,'state',undefined,a.cookie)).data;assert.equal(as.primaryClassId,null);});
+test('upload size cap: 学生作业单文件 5MB 上限，课程素材保持 20MB',async()=>{const x=await init();const {a,kid,code}=await classroom(x);
+ const s1=await login(x,'cap@example.com');await req(x,'join',{code},s1.cookie);
+ // 学生上传 5MB+1 字节 → 400 明确提示
+ const big=new FormData();big.set('classId',kid);big.set('file',new File([new Uint8Array(5*1024*1024+1)],'big.zip'));
+ const rejected=await req(x,'upload',big,s1.cookie);assert.equal(rejected.status,400);assert.match(rejected.data.error,/不能超过 5 MB/);
+ // 学生上传恰好 5MB → 通过
+ const ok=new FormData();ok.set('classId',kid);ok.set('file',new File([new Uint8Array(5*1024*1024)],'ok.zip'));
+ assert.equal((await req(x,'upload',ok,s1.cookie)).status,200);
+ // 课程素材 6MB → 仍按 20MB 上限放行
+ const mat=new FormData();mat.set('courseId',(await req(x,'state',undefined,a.cookie)).data.courses[0].id);mat.set('file',new File([new Uint8Array(6*1024*1024)],'素材.zip'));
+ assert.equal((await req(x,'upload',mat,a.cookie)).status,200,JSON.stringify((await req(x,'upload',mat,a.cookie)).data));});

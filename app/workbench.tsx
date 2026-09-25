@@ -477,6 +477,16 @@ export default function Workbench() {
     }
     await act(async () => {
       if (asStudent && !s.selected) throw Error('请先加入课堂');
+      if (asStudent) {
+        for (const file of Array.from(files)) {
+          if (file.size > 5 * 1024 * 1024)
+            throw Error(
+              '单个文件不能超过 5 MB（' +
+                file.name +
+                '），请压缩后再上传',
+            );
+        }
+      }
       const cid = asStudent ? s.selected : await ensureCourse();
       for (const file of Array.from(files)) {
         const data = new FormData();
@@ -1730,7 +1740,7 @@ export default function Workbench() {
                                 {detailIndividual
                                   ? `${s.user.name} · 个人判分实验，无需小组，以你本人名义提交。`
                                   : `${team.name} · `}
-                                上传 ZIP、Markdown 或相关证据。单个文件不超过 20
+                                上传 ZIP、Markdown 或相关证据。单个文件不超过 5
                                 MB。
                               </p>
                               <NativeFileInput
