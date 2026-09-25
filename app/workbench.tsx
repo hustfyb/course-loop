@@ -215,7 +215,7 @@ function PiModelPicker({
   onApply: (m: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(current);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -225,6 +225,10 @@ function PiModelPicker({
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
+  // 切换生效后输入框跟随显示最新生效的模型
+  useEffect(() => {
+    setText(current);
+  }, [current]);
   const trimmed = text.trim();
   // Pi 配置文件里的模型优先（真实可用），其后是历史使用过的模型与手输项
   const known: { id: string; name: string }[] = [
@@ -263,7 +267,6 @@ function PiModelPicker({
                 key={m.id}
                 onClick={() => {
                   onApply(m.id);
-                  setText('');
                   setOpen(false);
                 }}
               >
@@ -283,7 +286,6 @@ function PiModelPicker({
         disabled={!trimmed}
         onClick={() => {
           onApply(trimmed);
-          setText('');
           setOpen(false);
         }}
       >
