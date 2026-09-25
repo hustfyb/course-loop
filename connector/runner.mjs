@@ -19,13 +19,17 @@ export function promptFor(job,docs){const p=job.payload;let contract;
 export function parseResultJson(text){const t=String(text||'').trim();try{return JSON.parse(t);}catch{}const fenced=t.match(/```(?:json)?\s*([\s\S]*?)```/);if(fenced)try{return JSON.parse(fenced[1].trim());}catch{}const i=t.indexOf('{');const j=t.lastIndexOf('}');if(i>=0&&j>i)return JSON.parse(t.slice(i,j+1));throw Error('no json');}
 // acp：{command,args?,shell?} 静态对象，或 ()=>({command,args?,shell?}|null) 动态探测函数（返回 null 表示暂不可用）。
 // sendMail：async ({to,subject,text})=>void；为 null 时不声明邮件能力。
-export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=null,workRoot,pollIntervalMs=5000,taskTimeoutMs=1200000,log=console.log,errorLog=console.error}){
+export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=null,workRoot,pollIntervalMs=5000,taskTimeoutMs=1200000,concurrency=1,getConcurrency=null,log=console.log,errorLog=console.error}){
  if(!baseUrl)throw Error('runner 缺少 baseUrl');if(!token)throw Error('runner 缺少 token');if(!workRoot)throw Error('runner 缺少 workRoot');
  const accessHeaders=siteAccessToken?{'OAI-Sites-Authorization':'Bearer '+siteAccessToken}:{};
  const dynamicAcp=typeof acp==='function';const getAcp=dynamicAcp?acp:()=>acp;
  let stopped=false;const active=new Set();
  async function request(endpoint,body,lease){const response=await fetch(baseUrl+'/api/connector/'+endpoint,{method:'POST',headers:{...accessHeaders,'Content-Type':'application/json','Authorization':'Bearer '+token,...(lease?{'x-job-lease':lease}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});const r=await response.json();if(!response.ok)throw Error(r.error||'网站请求失败');return r;}
- async function processLoop(kind){let current=null;while(!stopped){try{const {job}=await request('poll',{acp:kind==='acp'&&!!getAcp(),mail:kind==='mail'&&!!sendMail});if(!job){await new Promise(r=>setTimeout(r,pollIntervalMs));continue;}let beat;try{
+ const desiredConcurrency=()=>Math.max(1,Math.min(8,Math.floor(typeof getConcurrency==='function'?(Number(getConcurrency())||1):concurrency)));
+ const acpWorkers=new Set();
+ async function processLoop(kind,self){let current=null;while(!stopped){try{
+  if(kind==='acp'&&[...acpWorkers].indexOf(self)>=desiredConcurrency()){acpWorkers.delete(self);return;}
+  const {job}=await request('poll',{acp:kind==='acp'&&!!getAcp(),mail:kind==='mail'&&!!sendMail});if(!job){await new Promise(r=>setTimeout(r,pollIntervalMs));continue;}let beat;try{
   log('处理任务',job.id,job.kind);
   if(job.kind==='email'){if(!sendMail)throw Error('邮件发送未配置');await sendMail({to:job.payload.to,subject:job.payload.subject,text:job.payload.text});await request('finish/'+job.id,{result:{delivered:true}},job.lease);log('任务完成',job.id);}
   else{const spec=getAcp();if(!spec)throw Error('Pi 暂不可用');const work=path.join(workRoot,job.id+'-'+job.lease);await fs.mkdir(work,{recursive:true});const docs=[];for(const file of job.files||[]){const r=await fetch(baseUrl+`/api/connector/file/${job.id}/${file.id}`,{headers:{...accessHeaders,Authorization:'Bearer '+token,'x-job-lease':job.lease},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('无法下载任务附件');const bytes=await r.arrayBuffer();if(bytes.byteLength>20*1024*1024)throw Error('附件超过大小限制');const fname=file.name.replace(/[\\/:\x00-\x1f]/g,'_');const dir=path.join(work,file.id);await fs.mkdir(dir,{recursive:true});const filePath=path.join(dir,fname);await fs.writeFile(filePath,Buffer.from(bytes));const content=await extractDocument(fname,bytes,dir);docs.push(`文件 ${file.name}：${filePath}\n${content}`);}
@@ -36,7 +40,13 @@ export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=
     try{await request('finish/'+job.id,{result},job.lease);log('任务完成',job.id);break;}catch(e){if(attempt===1){log('结果未通过网站校验，自动重跑一次',job.id,String(e.message).slice(0,120));continue;}const detail=Array.isArray(result?.items)?('items='+result.items.length+'('+result.items.map(i=>i.id).join(',')+')'):JSON.stringify(result)?.slice(0,120);throw Error(String(e.message).slice(0,80)+'（模型返回 '+detail+'）；网站保留失败任务，可修正配置后重试');}}}
  }catch(e){if(current){active.delete(current);current.kill();current=null;}await request('finish/'+job.id,{error:String(e.message).slice(0,1500)},job.lease).catch(()=>{});errorLog('任务失败',job.id,String(e.message).slice(0,180));}finally{clearInterval(beat);}
  }catch(e){errorLog('连接暂不可用：',String(e.message).slice(0,180));await new Promise(r=>setTimeout(r,10000));}}
- }
- const done=(async()=>{await fs.mkdir(workRoot,{recursive:true});const loops=[];if(dynamicAcp||getAcp())loops.push(processLoop('acp'));if(sendMail)loops.push(processLoop('mail'));await Promise.all(loops);})();
- return {stop(){stopped=true;for(const c of active){c.kill();}active.clear();},done};
+ acpWorkers.delete(self);}
+ // 并发 worker 池：定期把 acp worker 数量调到目标并发（扩容立即拉起，缩容由超额 worker 完成当前任务后自行退出）
+ const spawnLoop=()=>{const w={};acpWorkers.add(w);processLoop('acp',w).catch(()=>{});};
+ const acpReady=()=>dynamicAcp||!!getAcp();
+ const adjust=()=>{if(!acpReady())return;let guard=16;while(acpWorkers.size<desiredConcurrency()&&guard-->0)spawnLoop();};
+ const initial={};acpWorkers.add(initial);
+ const done=(async()=>{await fs.mkdir(workRoot,{recursive:true});adjust();const acpLoop=acpReady()?processLoop('acp',initial):Promise.resolve();const mailLoop=sendMail?processLoop('mail',null):null;await acpLoop;await mailLoop;})();
+ const adjustTimer=setInterval(adjust,pollIntervalMs);adjustTimer.unref?.();
+ return {stop(){stopped=true;if(adjustTimer)clearInterval(adjustTimer);for(const c of active){c.kill();}active.clear();},done};
 }

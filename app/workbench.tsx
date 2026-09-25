@@ -2649,6 +2649,33 @@ export default function Workbench() {
                     {s.health?.piMode === 'local' && (
                       <>
                         <div className="account-row">
+                          <strong>并发数</strong>
+                          <Select
+                            value={String(s.health?.piConcurrency || 1)}
+                            onValueChange={(v) =>
+                              act(async () => {
+                                await call('pi-concurrency', {
+                                  count: Number(v),
+                                });
+                                setNotice(
+                                  '评分并发已更新：扩容立即生效，缩容等当前任务完成后收回',
+                                );
+                              })
+                            }
+                          >
+                            <SelectTrigger className="w-[100px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                                <SelectItem key={n} value={String(n)}>
+                                  {n} 个任务
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="account-row">
                           <strong>Pi 程序</strong>
                           <span>
                             <code>{s.health?.piCommand || '未找到'}</code>

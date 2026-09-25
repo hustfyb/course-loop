@@ -350,3 +350,11 @@ test('grade-retry: 教师重评生成新任务，upsert 替换成绩；学生 40
  assert.equal((await req(x,'connector/finish/'+j.id,{result:{items:rubric.map((r,i)=>({id:r.id,score:i===0?10:0,reason:'未达成',evidence:['a.md:1']}))}},'',{...headers,'x-job-lease':j.lease})).status,200);
  const g=x.sqlite.prepare('SELECT report,published,updated FROM grades WHERE submissionId=?').get(sid);assert.equal(JSON.parse(g.report).total,64);assert.equal(g.published,1);
  assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM grades WHERE submissionId=?').get(sid).n,1,'upsert 不产生重复行');});
+test('pi-concurrency: admin 设置 1-8，越界 400，非 admin 403，快照透传（缺省 1）',async()=>{const x=await init();const a=await login(x,'admin@example.com');const t=await login(x,'t@example.com','teacher');
+ const st0=(await req(x,'state',undefined,a.cookie)).data;assert.equal(st0.health.piConcurrency,1,'缺省 1');
+ assert.equal((await req(x,'pi-concurrency',{count:0},a.cookie)).status,400);
+ assert.equal((await req(x,'pi-concurrency',{count:9},a.cookie)).status,400);
+ assert.equal((await req(x,'pi-concurrency',{count:2.5},a.cookie)).status,400);
+ assert.equal((await req(x,'pi-concurrency',{count:4},t.cookie)).status,403);
+ assert.equal((await req(x,'pi-concurrency',{count:4},a.cookie)).status,200);
+ const st=(await req(x,'state',undefined,a.cookie)).data;assert.equal(st.health.piConcurrency,4);});
