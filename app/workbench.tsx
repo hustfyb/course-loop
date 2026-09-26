@@ -6,6 +6,7 @@ import {
   useCallback,
   Fragment,
 } from 'react';
+import { marked } from 'marked';
 import {
   BookOpen,
   Layers3,
@@ -79,6 +80,12 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { initialCourse } from '@/lib/seed';
 import { statusNames } from '@/lib/domain';
 type Any = any;
@@ -294,6 +301,93 @@ function PiModelPicker({
     </div>
   );
 }
+// 提交的 Markdown 作业：右侧滑出预览。渲染结果放进 sandbox iframe（无 allow-scripts、
+// 独立源），文档里的脚本无法触及父页面；面板内提供下载按钮。
+const MD_PREVIEW_CSS =
+  "body{font-family:Arial,'Microsoft YaHei',sans-serif;font-size:14px;line-height:1.85;color:#3c4c66;margin:0;padding:26px 30px;max-width:820px}" +
+  "h1,h2,h3,h4{color:#273852;line-height:1.4;margin:1.4em 0 .5em}h1{font-size:24px}h2{font-size:20px}h3{font-size:17px}" +
+  "p{margin:.6em 0}a{color:#426bd2}code{background:#f2f5fa;border-radius:4px;padding:2px 5px;font-size:13px}" +
+  "pre{background:#f7f9fd;border:1px solid #e6ecf6;border-radius:8px;padding:14px;overflow:auto}pre code{background:none;padding:0}" +
+  "blockquote{margin:1em 0;padding:2px 16px;border-left:3px solid #c9d6ee;color:#6b7c96;background:#f9fbff}" +
+  "table{border-collapse:collapse;margin:1em 0}th,td{border:1px solid #dde5f0;padding:7px 12px;font-size:13px;text-align:left}th{background:#f2f5fa}" +
+  "img{max-width:100%}hr{border:none;border-top:1px solid #e6ecf6;margin:1.6em 0}ul,ol{padding-left:24px}li{margin:.3em 0}";
+
+function MdPreviewPanel({
+  fileId,
+  name,
+  onClose,
+}: {
+  fileId: string;
+  name: string;
+  onClose: () => void;
+}) {
+  const [html, setHtml] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    setHtml('');
+    setErr('');
+    fetch('/api/files/' + fileId)
+      .then((r) => {
+        if (!r.ok) throw Error('文件读取失败，请稍后重试');
+        return r.text();
+      })
+      .then((t) => {
+        if (alive) setHtml(marked.parse(t, { async: false }) as string);
+      })
+      .catch((e) => {
+        if (alive) setErr(e.message);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [fileId]);
+  const doc =
+    '<!doctype html><html><head><meta charset="utf-8"><style>' +
+    MD_PREVIEW_CSS +
+    '</style></head><body>' +
+    html +
+    '</body></html>';
+  return (
+    <Sheet
+      open
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        className="w-[92vw] sm:max-w-[min(780px,88vw)] gap-0 p-0"
+      >
+        <SheetHeader className="border-b pr-12">
+          <SheetTitle className="truncate text-left text-[15px]">
+            {name}
+          </SheetTitle>
+          <div className="button-row">
+            <a className="file-link" href={'/api/files/' + fileId} download>
+              <Download size={14} />
+              下载文件
+            </a>
+          </div>
+        </SheetHeader>
+        <div className="min-h-0 flex-1">
+          {err ? (
+            <div className="feedback error m-4">{err}</div>
+          ) : html ? (
+            <iframe
+              title={name}
+              sandbox=""
+              srcDoc={doc}
+              className="h-full w-full border-0"
+            />
+          ) : (
+            <p className="muted p-4">正在加载预览…</p>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
 export default function Workbench() {
   const [s, setS] = useState<Any>({ user: null, courses: [], classes: [] });
   const [loaded, setLoaded] = useState(false);
@@ -375,6 +469,10 @@ export default function Workbench() {
   const [reportExp, setReportExp] = useState('');
   const [bestOnly, setBestOnly] = useState(false);
   const [openSub, setOpenSub] = useState('');
+  const [mdPreview, setMdPreview] = useState<{
+    fileId: string;
+    name: string;
+  } | null>(null);
   const reportExps: Any[] = draft.experiments || [];
   const activeReportExp =
     reportExps.find((e: Any) => e.id === reportExp)?.id ||
@@ -494,12 +592,28 @@ export default function Workbench() {
         </p>
       )}
       <div className="button-row">
-        {sub.fileIds.map((fid: string) => (
-          <a className="file-link" href={'/api/files/' + fid} key={fid}>
-            <Download size={13} />
-            {s.files?.find((f: Any) => f.id === fid)?.name || '提交文件'}
-          </a>
-        ))}
+        {sub.fileIds.map((fid: string) => {
+          const f = s.files?.find((x: Any) => x.id === fid);
+          const isMd = f && /\.(md|markdown)$/i.test(f.name || '');
+          return isMd ? (
+            <button
+              type="button"
+              className="file-link"
+              key={fid}
+              onClick={() =>
+                setMdPreview({ fileId: fid, name: f.name || '作业预览' })
+              }
+            >
+              <FileText size={13} />
+              {f.name}
+            </button>
+          ) : (
+            <a className="file-link" href={'/api/files/' + fid} key={fid}>
+              <Download size={13} />
+              {f?.name || '提交文件'}
+            </a>
+          );
+        })}
       </div>
       <div className="report-actions">
         {sub.status === 'failed' && (
@@ -3696,6 +3810,13 @@ export default function Workbench() {
         <Sparkles size={19} />
         问小课
       </button>
+      {mdPreview && (
+        <MdPreviewPanel
+          fileId={mdPreview.fileId}
+          name={mdPreview.name}
+          onClose={() => setMdPreview(null)}
+        />
+      )}
       {assistOpen && (
         <div className="assist-panel" role="dialog" aria-label="小课助手">
           <header className="assist-head">
