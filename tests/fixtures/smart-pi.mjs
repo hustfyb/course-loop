@@ -6,7 +6,7 @@ import path from 'node:path';
 function answer(prompt){
  const kind=(prompt.match(/任务类型：(\w+)/)||[])[1];
  if(!kind)return 'ok';
- const payloadText=prompt.split('可信任务配置')[1]?.split('）：\n')[1]?.split('\n\n附件路径与提取文本')[0];
+ const payloadText=prompt.split('可信任务配置')[1]?.split('）：\n')[1]?.split('\n\n提交的附件已放在你的工作目录')[0];
  const p=payloadText?JSON.parse(payloadText):{};
  if(kind==='draft'){const valid=p.draft&&Array.isArray(p.draft.experiments)&&p.draft.experiments.length;const d=valid?p.draft:{title:'fixture 课程',term:'T1',description:'',experiments:[{id:'exp-1',title:'fixture 实验',week:'W1',summary:'s',task:'t',deliverables:['d'],rubric:[{id:'r1',title:'评分项',max:100,criteria:'c'}],questions:[],instructions:'i'}],questions:[]};return JSON.stringify({message:'已按课程文档整理草案，请预览后确认发布。',draft:d});}
  if(kind==='grade')return JSON.stringify({items:p.experiment.rubric.map(r=>({id:r.id,score:r.max,reason:'fixture 按评分条款核验通过',evidence:['fixture 证据:1']})),questions:[],needsReview:false,limitations:[]});
