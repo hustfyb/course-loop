@@ -375,7 +375,6 @@ export default function Workbench() {
   const [reportExp, setReportExp] = useState('');
   const [bestOnly, setBestOnly] = useState(false);
   const [openSub, setOpenSub] = useState('');
-  const [openUnit, setOpenUnit] = useState('');
   const reportExps: Any[] = draft.experiments || [];
   const activeReportExp =
     reportExps.find((e: Any) => e.id === reportExp)?.id ||
@@ -2305,7 +2304,6 @@ export default function Workbench() {
                             key={e.id}
                             onClick={() => {
                               setReportExp(e.id);
-                              setOpenUnit('');
                               setOpenSub('');
                             }}
                           >
@@ -2349,7 +2347,6 @@ export default function Workbench() {
                             <TableHead>提交次数</TableHead>
                             <TableHead>最高分</TableHead>
                             <TableHead>状态</TableHead>
-                            <TableHead></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -2374,14 +2371,7 @@ export default function Workbench() {
                                     : 'complete';
                             return (
                               <Fragment key={u.key}>
-                                <TableRow
-                                  className="sub-row"
-                                  onClick={() =>
-                                    setOpenUnit(
-                                      openUnit === u.key ? '' : u.key,
-                                    )
-                                  }
-                                >
+                                <TableRow className="unit-row">
                                   <TableCell>
                                     <strong>{u.label}</strong>
                                   </TableCell>
@@ -2406,35 +2396,10 @@ export default function Workbench() {
                                       <span className="tag green">已完成</span>
                                     )}
                                   </TableCell>
-                                  <TableCell>
-                                    {u.subs.length > 0 && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setOpenUnit(
-                                            openUnit === u.key ? '' : u.key,
-                                          );
-                                        }}
-                                      >
-                                        <span className="inline-flex items-center gap-1">
-                                          {openUnit === u.key ? (
-                                            <ChevronDown size={14} />
-                                          ) : (
-                                            <ChevronRight size={14} />
-                                          )}
-                                          {openUnit === u.key
-                                            ? '收起'
-                                            : '展开明细'}
-                                        </span>
-                                      </Button>
-                                    )}
-                                  </TableCell>
                                 </TableRow>
-                                {openUnit === u.key && (
+                                {u.subs.length > 0 && (
                                   <TableRow className="sub-detail-row">
-                                    <TableCell colSpan={5}>
+                                    <TableCell colSpan={4}>
                                       <div className="sub-detail sub-detail-fixed">
                                         {u.subs.map((sub: Any) => (
                                           <Fragment key={sub.id}>
@@ -2588,9 +2553,6 @@ export default function Workbench() {
                             onClick={() => {
                               setReportExp(a.experimentId);
                               setBestOnly(false);
-                              setOpenUnit(
-                                a.teamId ? 't' + a.teamId : 'u' + a.studentId,
-                              );
                               setOpenSub('');
                             }}
                           >
