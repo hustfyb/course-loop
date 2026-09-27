@@ -357,7 +357,7 @@ function MdPreviewPanel({
     >
       <SheetContent
         side="right"
-        className="w-[92vw] sm:max-w-[min(780px,88vw)] gap-0 p-0"
+        className="data-[side=right]:w-[94vw] data-[side=right]:sm:max-w-[min(1080px,94vw)] gap-0 p-0"
       >
         <SheetHeader className="border-b pr-12">
           <SheetTitle className="truncate text-left text-[15px]">
@@ -1741,12 +1741,28 @@ export default function Workbench() {
                         .map((f: Any) => (
                           <div className="member" key={f.id}>
                             <FileText size={18} />
-                            <a
-                              className="file-link"
-                              href={'/api/files/' + f.id}
-                            >
-                              {f.name}
-                            </a>
+                            {/\.(md|markdown)$/i.test(f.name || '') ? (
+                              <button
+                                type="button"
+                                className="file-link"
+                                onClick={() =>
+                                  setMdPreview({
+                                    fileId: f.id,
+                                    name: f.name || '素材预览',
+                                  })
+                                }
+                              >
+                                <FileText size={14} />
+                                {f.name}
+                              </button>
+                            ) : (
+                              <a
+                                className="file-link"
+                                href={'/api/files/' + f.id}
+                              >
+                                {f.name}
+                              </a>
+                            )}
                             <span className="tag">
                               {f.visibility === 'student'
                                 ? '学生可见'
