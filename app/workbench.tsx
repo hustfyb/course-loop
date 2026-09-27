@@ -357,7 +357,7 @@ function MdPreviewPanel({
     >
       <SheetContent
         side="right"
-        className="data-[side=right]:w-[94vw] data-[side=right]:sm:max-w-[min(1080px,94vw)] gap-0 p-0"
+        className="data-[side=right]:w-[50vw] data-[side=right]:sm:max-w-[50vw] gap-0 p-0"
       >
         <SheetHeader className="border-b pr-12">
           <SheetTitle className="truncate text-left text-[15px]">
