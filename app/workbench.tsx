@@ -7,6 +7,7 @@ import {
   Fragment,
 } from 'react';
 import { marked } from 'marked';
+import mammoth from 'mammoth';
 import {
   BookOpen,
   Layers3,
@@ -312,7 +313,7 @@ const MD_PREVIEW_CSS =
   "table{border-collapse:collapse;margin:1em 0}th,td{border:1px solid #dde5f0;padding:7px 12px;font-size:13px;text-align:left}th{background:#f2f5fa}" +
   "img{max-width:100%}hr{border:none;border-top:1px solid #e6ecf6;margin:1.6em 0}ul,ol{padding-left:24px}li{margin:.3em 0}";
 
-function MdPreviewPanel({
+function DocPreviewPanel({
   fileId,
   name,
   onClose,
@@ -327,21 +328,28 @@ function MdPreviewPanel({
     let alive = true;
     setHtml('');
     setErr('');
-    fetch('/api/files/' + fileId)
-      .then((r) => {
-        if (!r.ok) throw Error('文件读取失败，请稍后重试');
-        return r.text();
-      })
-      .then((t) => {
-        if (alive) setHtml(marked.parse(t, { async: false }) as string);
-      })
-      .catch((e) => {
-        if (alive) setErr(e.message);
-      });
+    const isDocx = /\.docx$/i.test(name);
+    (async () => {
+      try {
+        const resp = await fetch('/api/files/' + fileId);
+        if (!resp.ok) throw Error('文件读取失败，请稍后重试');
+        if (isDocx) {
+          const buf = await resp.arrayBuffer();
+          if (!alive) return;
+          const cv = await mammoth.convertToHtml({ arrayBuffer: buf });
+          if (alive) setHtml(cv.value);
+        } else {
+          const text = await resp.text();
+          if (alive) setHtml(marked.parse(text, { async: false }) as string);
+        }
+      } catch (e) {
+        if (alive) setErr((e as Error).message || '预览转换失败');
+      }
+    })();
     return () => {
       alive = false;
     };
-  }, [fileId]);
+  }, [fileId, name]);
   const doc =
     '<!doctype html><html><head><meta charset="utf-8"><style>' +
     MD_PREVIEW_CSS +
@@ -594,7 +602,7 @@ export default function Workbench() {
       <div className="button-row">
         {sub.fileIds.map((fid: string) => {
           const f = s.files?.find((x: Any) => x.id === fid);
-          const isMd = f && /\.(md|markdown)$/i.test(f.name || '');
+          const isMd = f && /\.(md|markdown|docx)$/i.test(f.name || '');
           return isMd ? (
             <button
               type="button"
@@ -1741,7 +1749,7 @@ export default function Workbench() {
                         .map((f: Any) => (
                           <div className="member" key={f.id}>
                             <FileText size={18} />
-                            {/\.(md|markdown)$/i.test(f.name || '') ? (
+                            {/\.(md|markdown|docx)$/i.test(f.name || '') ? (
                               <button
                                 type="button"
                                 className="file-link"
@@ -3827,7 +3835,7 @@ export default function Workbench() {
         问小课
       </button>
       {mdPreview && (
-        <MdPreviewPanel
+        <DocPreviewPanel
           fileId={mdPreview.fileId}
           name={mdPreview.name}
           onClose={() => setMdPreview(null)}
