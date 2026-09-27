@@ -97,18 +97,33 @@ const fmt = (n: number) =>
     hour: '2-digit',
     minute: '2-digit',
   });
+// 隧道重连/服务重启的秒级空窗里，网关会返回 HTML 错误页而非 JSON：
+// 统一按网络抖动处理（友好提示 + 7 秒轮询自然恢复），不把解析错误直接抛给用户。
+const TRANSIENT_ERR = /连接中断|暂时不可用|自动恢复/;
 async function call(path: string, data?: Any) {
-  const r = await fetch('/api/' + path, {
-    method: data === undefined ? 'GET' : 'POST',
-    headers:
-      data instanceof FormData ? {} : { 'Content-Type': 'application/json' },
-    body:
-      data === undefined
-        ? undefined
-        : data instanceof FormData
-          ? data
-          : JSON.stringify(data),
-  });
+  let r: Response;
+  try {
+    r = await fetch('/api/' + path, {
+      method: data === undefined ? 'GET' : 'POST',
+      headers:
+        data instanceof FormData ? {} : { 'Content-Type': 'application/json' },
+      body:
+        data === undefined
+          ? undefined
+          : data instanceof FormData
+            ? data
+            : JSON.stringify(data),
+    });
+  } catch {
+    throw Error('网络连接中断，正在自动恢复');
+  }
+  if (!(r.headers.get('content-type') || '').includes('application/json')) {
+    throw Error(
+      r.status >= 500
+        ? '服务暂时不可用（' + r.status + '），正在自动恢复'
+        : '服务响应异常，正在自动恢复',
+    );
+  }
   const v: Any = await r.json();
   if (!r.ok) throw Error(v.error || '请求未完成');
   return v;
@@ -425,6 +440,8 @@ export default function Workbench() {
           (selected ? '?' + key + '=' + encodeURIComponent(selected) : ''),
       );
       setS(state);
+      // 网络抖动类错误在下一次成功轮询后自动消失；业务错误保留由用户关闭
+      setError((prev: string) => (TRANSIENT_ERR.test(prev) ? '' : prev));
       if (state.user?.role === 'pending')
         setModal((m: Any) => m || { type: 'profile' });
       const ids = navsByRole[state.user?.role || 'guest'].map((n) => n[0]);
