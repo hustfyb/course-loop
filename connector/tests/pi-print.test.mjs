@@ -64,3 +64,18 @@ test('pi-print：超时杀掉进程并以「Pi 任务超时」reject；kill() �
   await assert.rejects(()=>hanging,/退出码/);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+test('pi-print：toolList 传 --tools 白名单',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pi-print-'));
+ try{
+  const spec=await makeFixture(dir,`import fs from 'node:fs';
+fs.writeFileSync('argv.json',JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'ok'}]}})+'\\n');
+`);
+  const r=await runPiPrint(spec,{cwd:dir,prompt:'p',timeoutMs:15000,toolList:['read']});
+  assert.equal(r.text,'ok');
+  const argv=JSON.parse(await fs.readFile(path.join(dir,'argv.json'),'utf8'));
+  const i=argv.indexOf('--tools');
+  assert.ok(i>=0,'应传 --tools');
+  assert.equal(argv[i+1],'read');
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});

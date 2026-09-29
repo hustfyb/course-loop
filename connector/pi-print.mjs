@@ -5,7 +5,7 @@
 import {spawn} from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-export function runPiPrint(spec,{cwd,prompt,timeoutMs=600000,tools=true,onEvent}={}){
+export function runPiPrint(spec,{cwd,prompt,timeoutMs=600000,tools=true,toolList=null,onEvent}={}){
  let child=null;
  const promise=(async()=>{
   if(!spec?.command)throw Error('缺少 Pi 命令');
@@ -13,6 +13,7 @@ export function runPiPrint(spec,{cwd,prompt,timeoutMs=600000,tools=true,onEvent}
   await fs.writeFile(path.join(cwd,'PROMPT.md'),prompt);
   const args=[...(spec.args||[]),'-p','--mode','json'];
   if(!tools)args.push('--no-tools');
+  else if(toolList&&toolList.length)args.push('--tools',toolList.join(','));
   args.push('@PROMPT.md');
   // Windows 关键：.cmd/.bat 必须 shell:true；一律 windowsHide:true（缺失会导致进程秒退）。
   const shell=!!spec.shell||/\.(cmd|bat)$/i.test(spec.command);
