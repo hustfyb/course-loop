@@ -2430,6 +2430,23 @@ export default function Workbench() {
                         导出成绩
                       </Button>
                     )}
+                    {teacher && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() =>
+                          open('retryAll', {
+                            count: (s.submissions || []).filter(
+                              (x: Any) => x.status === 'failed',
+                            ).length,
+                          })
+                        }
+                      >
+                        <RefreshCw size={14} />
+                        一键重试
+                      </Button>
+                    )}
                   </div>
                 </div>
                 {teacher ? (
@@ -3090,6 +3107,7 @@ export default function Workbench() {
                     teamConfirm: '确认成员变更',
                     publish: '确认发布课程',
                     formal: '确认提交作业',
+                    retryAll: '一键重试失败作业',
                     regrade: '重新评估这份作业',
                     appeal: '对评分提出申诉',
                     review: '复核与成绩发布',
@@ -3729,6 +3747,29 @@ export default function Workbench() {
               >
                 发起重新评估
               </Button>
+            </>
+          )}
+          {modal?.type === 'retryAll' && (
+            <>
+              <p>
+                {modal.count > 0
+                  ? `将把本课堂 ${modal.count} 份评分失败的作业重新提交给小课评分，按当前并发排队执行，完成后自动发布并替换原成绩。`
+                  : '当前没有评分失败的作业，无需重试。'}
+              </p>
+              {modal.count > 0 && (
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    mutation(
+                      'grade-retry-all',
+                      { classId: s.selected },
+                      '失败的作业已重新提交，将在队列中依次评分',
+                    )
+                  }
+                >
+                  重试 {modal.count} 份
+                </Button>
+              )}
             </>
           )}
           {modal?.type === 'pair' && (

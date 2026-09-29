@@ -369,3 +369,13 @@ test('individual submission files: 个人作业文件带 classId，教师视角�
  const mine=fs.find(x=>x.id===fid);assert.ok(mine,'教师列表应包含个人作业文件');assert.equal(mine.classId,kid);assert.equal(mine.teamId,null);
  // 课程素材面板口径（classId 为 NULL 的课程级文件）不含作业文件
  assert.equal(fs.filter(x=>!x.classId).length,fs.filter(x=>!x.classId&&!x.teamId&&x.classId===null&&x.visibility==='student').length,'面板过滤口径下无课堂文件混入');});
+
+test('grade-retry-all: 教师一键重试全部失败作业，学生 403，无失败时 count=0',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'ra@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'重试组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ const ids=[];for(let i=0;i<2;i++){const sub=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);ids.push(sub.data.id);const j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;await req(x,'connector/finish/'+j.id,{error:'渠道超时'},'',{...headers,'x-job-lease':j.lease});}
+ assert.equal((await req(x,'grade-retry-all',{classId:kid},s1.cookie)).status,403);
+ const tc=await login(x,'teacher@example.com','teacher');
+ const r=await req(x,'grade-retry-all',{classId:kid},tc.cookie);assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.count,2);
+ const jobs=x.sqlite.prepare('SELECT j.status FROM submissions s JOIN jobs j ON j.id=s.jobId').all();assert.deepEqual(jobs.map(j=>j.status),['queued','queued']);
+ const r2=await req(x,'grade-retry-all',{classId:kid},tc.cookie);assert.equal(r2.data.count,0);});
