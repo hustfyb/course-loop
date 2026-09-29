@@ -1758,11 +1758,11 @@ export default function Workbench() {
                 noClass
               ) : (
                 <>
-                  {s.files?.filter((f: Any) => !f.teamId).length > 0 && (
+                  {s.files?.filter((f: Any) => !f.classId).length > 0 && (
                     <section className="panel data-panel">
                       <h2>课程文档与素材</h2>
                       {s.files
-                        .filter((f: Any) => !f.teamId)
+                        .filter((f: Any) => !f.classId)
                         .map((f: Any) => (
                           <div className="member" key={f.id}>
                             <FileText size={18} />

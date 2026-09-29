@@ -358,3 +358,14 @@ test('pi-concurrency: admin 设置 1-8，越界 400，非 admin 403，快照透�
  assert.equal((await req(x,'pi-concurrency',{count:4},t.cookie)).status,403);
  assert.equal((await req(x,'pi-concurrency',{count:4},a.cookie)).status,200);
  const st=(await req(x,'state',undefined,a.cookie)).data;assert.equal(st.health.piConcurrency,4);});
+test('individual submission files: 个人作业文件带 classId，教师视角可按 id 查名但不混入课程素材面板',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);
+ const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);d.experiments[0].grading='individual';x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'iv@example.com');await req(x,'join',{code},s1.cookie);
+ const f=new FormData();f.set('classId',kid);f.set('file',new File(['my work'],'我的作业.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ // 教师视角：文件列表含个人作业（详情按 id 查名依赖它），且该文件带 classId、courseId
+ const fs=(await req(x,'state',undefined,(await login(x,'teacher@example.com','teacher')).cookie)).data.files;
+ const mine=fs.find(x=>x.id===fid);assert.ok(mine,'教师列表应包含个人作业文件');assert.equal(mine.classId,kid);assert.equal(mine.teamId,null);
+ // 课程素材面板口径（classId 为 NULL 的课程级文件）不含作业文件
+ assert.equal(fs.filter(x=>!x.classId).length,fs.filter(x=>!x.classId&&!x.teamId&&x.classId===null&&x.visibility==='student').length,'面板过滤口径下无课堂文件混入');});
