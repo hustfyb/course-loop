@@ -586,7 +586,14 @@ export default function Workbench() {
                   <span>{i.score} 分</span>
                 </strong>
                 <p>{i.reason}</p>
-                <small>证据:{i.evidence.join('；')}</small>
+                <small>
+                    证据:
+                    {i.evidence.map((e: string, k: number) => (
+                      <span className="evi-line" key={k}>
+                        {k + 1}. {e}
+                      </span>
+                    ))}
+                  </small>
               </div>
             ))}
           </div>

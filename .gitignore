@@ -51,3 +51,4 @@ next-env.d.ts
 **/node_modules/
 *.tsbuildinfo
 /site-package.tgz
+data-backup*
