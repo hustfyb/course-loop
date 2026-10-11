@@ -19,7 +19,7 @@ export function promptFor(job,docs){const p=job.payload;let contract;
 export function parseResultJson(text){const t=String(text||'').trim();try{return JSON.parse(t);}catch{}const fenced=t.match(/```(?:json)?\s*([\s\S]*?)```/);if(fenced)try{return JSON.parse(fenced[1].trim());}catch{}const i=t.indexOf('{');const j=t.lastIndexOf('}');if(i>=0&&j>i)return JSON.parse(t.slice(i,j+1));throw Error('no json');}
 // acp：{command,args?,shell?} 静态对象，或 ()=>({command,args?,shell?}|null) 动态探测函数（返回 null 表示暂不可用）。
 // sendMail：async ({to,subject,text})=>void；为 null 时不声明邮件能力。
-export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=null,workRoot,pollIntervalMs=5000,taskTimeoutMs=1800000,concurrency=1,getConcurrency=null,log=console.log,errorLog=console.error}){
+export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=null,workRoot,pollIntervalMs=5000,taskTimeoutMs=1800000,idleTimeoutMs=240000,maxAttempts=3,concurrency=1,getConcurrency=null,log=console.log,errorLog=console.error}){
  if(!baseUrl)throw Error('runner 缺少 baseUrl');if(!token)throw Error('runner 缺少 token');if(!workRoot)throw Error('runner 缺少 workRoot');
  const accessHeaders=siteAccessToken?{'OAI-Sites-Authorization':'Bearer '+siteAccessToken}:{};
  const dynamicAcp=typeof acp==='function';const getAcp=dynamicAcp?acp:()=>acp;
@@ -33,11 +33,18 @@ export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=
   log('处理任务',job.id,job.kind);
   if(job.kind==='email'){if(!sendMail)throw Error('邮件发送未配置');await sendMail({to:job.payload.to,subject:job.payload.subject,text:job.payload.text});await request('finish/'+job.id,{result:{delivered:true}},job.lease);log('任务完成',job.id);}
   else{const spec=getAcp();if(!spec)throw Error('Pi 暂不可用');const work=path.join(workRoot,job.id+'-'+job.lease);await fs.mkdir(work,{recursive:true});const docs=[];for(const file of job.files||[]){const r=await fetch(baseUrl+`/api/connector/file/${job.id}/${file.id}`,{headers:{...accessHeaders,Authorization:'Bearer '+token,'x-job-lease':job.lease},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('无法下载任务附件');const bytes=await r.arrayBuffer();if(bytes.byteLength>20*1024*1024)throw Error('附件超过大小限制');const fname=file.name.replace(/[\\/:\x00-\x1f]/g,'_');const dir=path.join(work,file.id);await fs.mkdir(dir,{recursive:true});const filePath=path.join(dir,fname);await fs.writeFile(filePath,Buffer.from(bytes));const info=await extractDocument(fname,bytes,dir);docs.push(file.name.toLowerCase().endsWith('.zip')?`文件 ${file.name}：${filePath}\n${info}`:`文件 ${file.name}：${filePath}（用 read 工具查看，未读取不得作为评分依据）`);}
-   // 模型输出偶发格式漂移（解析失败）或未通过网站校验（如评分项数量不符）：自动原样重跑一次，仍失败才报错并附输出片段供诊断
-   for(let attempt=1;;attempt++){
-    current=runPiPrint(spec,{cwd:work,prompt:promptFor(job,docs),timeoutMs:taskTimeoutMs,toolList:['read'],thinking:'medium'});active.add(current);clearInterval(beat);beat=setInterval(()=>request('heartbeat/'+job.id,{},job.lease).catch(()=>{current?.kill()}),30000);let output;try{output=await current;}finally{active.delete(current);current=null;}
-    let result;try{result=parseResultJson(output.text);}catch{if(attempt===1){log('输出无法解析为 JSON，自动重跑一次',job.id);continue;}throw Error('Agent 两次输出均无法解析为 JSON（结尾片段：'+String(output.text||'').slice(-150).replace(/\s+/g,' ')+'）；网站保留失败任务，可修正配置后重试');}
-    try{await request('finish/'+job.id,{result},job.lease);log('任务完成',job.id);break;}catch(e){if(attempt===1){log('结果未通过网站校验，自动重跑一次',job.id,String(e.message).slice(0,120));continue;}const detail=Array.isArray(result?.items)?('items='+result.items.length+'('+result.items.map(i=>i.id).join(',')+')'):JSON.stringify(result)?.slice(0,120);throw Error(String(e.message).slice(0,80)+'（模型返回 '+detail+'）；网站保留失败任务，可修正配置后重试');}}}
+   // 渠道偶发卡死（空闲检测快速失败）、空响应、格式漂移或未通过网站校验：自动重试至多 maxAttempts 次，仍失败才报错
+   let lastErr=null,lastResult=null;
+   for(let attempt=1;attempt<=maxAttempts;attempt++){
+    try{
+     current=runPiPrint(spec,{cwd:work,prompt:promptFor(job,docs),timeoutMs:taskTimeoutMs,idleTimeoutMs,toolList:['read'],thinking:'medium'});active.add(current);clearInterval(beat);beat=setInterval(()=>request('heartbeat/'+job.id,{},job.lease).catch(()=>{current?.kill()}),30000);
+     let output;try{output=await current;}finally{active.delete(current);current=null;}
+     let result;try{result=parseResultJson(output.text);}catch{throw Error('输出无法解析为 JSON（结尾片段：'+String(output.text||'').slice(-150).replace(/\s+/g,' ')+'）');}
+     lastResult=result;
+     await request('finish/'+job.id,{result},job.lease);log('任务完成',job.id);lastErr=null;break;
+    }catch(e){lastErr=e;if(attempt<maxAttempts){log('任务失败，自动重试',job.id,'第'+attempt+'/'+maxAttempts+'次',String(e.message).slice(0,120));await new Promise(r=>setTimeout(r,3000));}}
+   }
+   if(lastErr){const detail=Array.isArray(lastResult?.items)?('（模型返回 items='+lastResult.items.length+'）'):'';throw Error(String(lastErr.message).slice(0,140)+detail+'；已重试 '+maxAttempts+' 次仍失败，网站保留失败任务');}}
  }catch(e){if(current){active.delete(current);current.kill();current=null;}await request('finish/'+job.id,{error:String(e.message).slice(0,1500)},job.lease).catch(()=>{});errorLog('任务失败',job.id,String(e.message).slice(0,180));}finally{clearInterval(beat);}
  }catch(e){errorLog('连接暂不可用：',String(e.message).slice(0,180));await new Promise(r=>setTimeout(r,10000));}}
  acpWorkers.delete(self);}

@@ -5,7 +5,7 @@
 import {spawn} from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-export function runPiPrint(spec,{cwd,prompt,timeoutMs=600000,tools=true,toolList=null,thinking=null,onEvent}={}){
+export function runPiPrint(spec,{cwd,prompt,timeoutMs=600000,tools=true,toolList=null,thinking=null,idleTimeoutMs=null,onEvent}={}){
  let child=null;
  const promise=(async()=>{
   if(!spec?.command)throw Error('缺少 Pi 命令');
@@ -19,18 +19,22 @@ export function runPiPrint(spec,{cwd,prompt,timeoutMs=600000,tools=true,toolList
   // Windows 关键：.cmd/.bat 必须 shell:true；一律 windowsHide:true（缺失会导致进程秒退）。
   const shell=!!spec.shell||/\.(cmd|bat)$/i.test(spec.command);
   return await new Promise((resolve,reject)=>{
-   let stderr='',errNote='',text=null,usage=null,settled=false;
-   const finish=(fn,v)=>{if(settled)return;settled=true;clearTimeout(timer);fn(v);};
+   let stderr='',errNote='',text=null,usage=null,settled=false,idleKilled=false,idleTimer=null;
+   const finish=(fn,v)=>{if(settled)return;settled=true;clearTimeout(timer);if(idleTimer)clearTimeout(idleTimer);fn(v);};
    const timer=setTimeout(()=>{try{child?.kill();}catch{};finish(reject,Error('Pi 任务超时（'+Math.round(timeoutMs/1000)+' 秒）'));},timeoutMs);
+   // 空闲检测：渠道偶发卡死时长时间无任何输出事件，提前判失败让上层快速重试，而不是干等到总超时。
+   const armIdle=()=>{if(!idleTimeoutMs)return;if(idleTimer)clearTimeout(idleTimer);idleTimer=setTimeout(()=>{idleKilled=true;try{child?.kill();}catch{};finish(reject,Error('Pi 空闲超时（'+Math.round(idleTimeoutMs/1000)+' 秒无输出，判定渠道卡死）'));},idleTimeoutMs);};
    try{child=spawn(spec.command,args,{cwd,shell,windowsHide:true,stdio:['ignore','pipe','pipe']});}
    catch(e){finish(reject,e);return;}
+   armIdle();
    child.on('error',e=>finish(reject,e));
    child.stderr.on('data',d=>{stderr=(stderr+String(d)).slice(-2000);});
    let buf='';
-   child.stdout.on('data',d=>{buf+=String(d);let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+1);if(!line)continue;let ev;try{ev=JSON.parse(line);}catch{continue;}try{onEvent?.(ev);}catch{}
+   child.stdout.on('data',d=>{armIdle();buf+=String(d);let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+1);if(!line)continue;let ev;try{ev=JSON.parse(line);}catch{continue;}try{onEvent?.(ev);}catch{}
     if(ev?.type==='error'){const m=ev.error?.message||ev.message;if(m)errNote=String(m);}
     if(ev?.type==='message_end'&&ev.message?.role==='assistant'){const parts=(ev.message.content||[]).filter(c=>c?.type==='text').map(c=>c.text||'');text=parts.join('');if(ev.message.usage)usage=ev.message.usage;}}});
    child.on('close',code=>{
+    if(idleKilled)return;
     const tail=(stderr.trim()||errNote).slice(-300);
     if(code!==0){finish(reject,Error('Pi 退出码 '+code+(tail?'：'+tail:'')));return;}
     if(!text){finish(reject,Error('Pi 未返回文本输出'+(tail?'：'+tail:'')));return;}

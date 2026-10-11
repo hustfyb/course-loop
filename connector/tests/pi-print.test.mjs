@@ -79,3 +79,18 @@ process.stdout.write(JSON.stringify({type:'message_end',message:{role:'assistant
   assert.equal(argv[i+1],'read');
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+test('pi-print：idleTimeoutMs 空闲无输出时快速失败（不等总超时）',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pi-print-'));
+ try{
+  // fixture 启动后不输出任何内容，只 sleep：应在 idleTimeoutMs 内被判定空闲超时
+  const spec=await makeFixture(dir,`setTimeout(()=>{},30000);`);
+  const t0=Date.now();
+  await assert.rejects(
+   runPiPrint(spec,{cwd:dir,prompt:'p',timeoutMs:30000,idleTimeoutMs:2000}),
+   /空闲超时/,
+  );
+  const secs=Math.round((Date.now()-t0)/1000);
+  assert.ok(secs<10,'应在远小于总超时(30s)前失败，实际 '+secs+'s');
+  await new Promise(r=>setTimeout(r,500));
+ }finally{try{await fs.rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:300});}catch{}}
+});
