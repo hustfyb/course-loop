@@ -298,6 +298,11 @@ test('primary class: 管理员设置主课堂，其截止时间对本课程全�
  assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,200);
  const ts=(await req(x,'state',undefined,t.cookie)).data;const k1=ts.classes.find(c=>c.id===kid);const kk2=ts.classes.find(c=>c.id===k2.id);
  assert.ok(k1.isPrimary,'主课堂标记');assert.ok(!kk2.isPrimary,'非主课堂无标记');assert.equal(kk2.primaryName,k1.name);assert.ok(kk2.primaryDeadline>Date.now());
+ // 学生端与管理员课堂卡片也要能看到继承的主课堂截止时间
+ const ss=(await req(x,'state',undefined,s1.cookie)).data;const sk2=ss.classes.find(c=>c.id===k2.id);
+ assert.ok(!sk2.isPrimary);assert.equal(sk2.primaryClassId,kid);assert.ok(sk2.primaryDeadline>Date.now(),'学生端可见主课堂截止时间');
+ const ac=(await req(x,'state?course='+cid,undefined,a.cookie)).data;const cc=ac.courseClasses.find(c=>c.id===k2.id);
+ assert.ok(cc.primaryDeadline>Date.now(),'管理员课程详情课堂卡片带继承截止时间');
  // 清除主课堂 → 恢复按各课堂自己的截止时间
  assert.equal((await req(x,'course-primary',{courseId:cid,classId:''},a.cookie)).status,200);
  x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,k2.id);

@@ -483,6 +483,25 @@ export default function Workbench() {
     ? s.courses?.find((c: Any) => c.id === s.selected)
     : s.course;
   const cls = s.classes?.find((c: Any) => c.id === s.selected);
+  const effDeadline = (c: Any) =>
+    c
+      ? (c.primaryClassId
+          ? c.isPrimary
+            ? c.deadline
+            : c.primaryDeadline
+          : c.deadline) || null
+      : null;
+  const deadlineLabel = (c: Any) => {
+    const dl = effDeadline(c);
+    const inherited = c?.primaryClassId && !c.isPrimary;
+    if (!dl) return inherited ? '主课堂未设置' : '未设置';
+    return (
+      fmt(dl) +
+      (inherited
+        ? `（主课堂${c.primaryName ? `「${c.primaryName}」` : ''}统一设置）`
+        : '')
+    );
+  };
   const draft = s.draft || initialCourse;
   const team = s.teams?.find((t: Any) => t.id === s.myTeam);
   const detailIndividual = detail?.grading === 'individual';
@@ -1567,7 +1586,9 @@ export default function Workbench() {
                           <Users size={16} />
                           <div>
                             <strong>{c.students} 位学生</strong>
-                            <small>{c.teams} 个 Team</small>
+                            <small>
+                              {c.teams} 个 Team · 截止 {deadlineLabel(c)}
+                            </small>
                           </div>
                         </div>
                         <div className="button-row">
@@ -1734,7 +1755,7 @@ export default function Workbench() {
                         <strong>课堂邀请码 {c.joinCode}</strong>
                         <small>
                           小组上限 {c.maxSize} 人 · 截止{' '}
-                          {c.deadline ? fmt(c.deadline) : '未设置'}
+                          {deadlineLabel(c)}
                         </small>
                       </div>
                       <button
@@ -1993,6 +2014,11 @@ export default function Workbench() {
                           <h3>
                             {detailIndividual ? '提交我的成果' : '提交本组成果'}
                           </h3>
+                          {effDeadline(cls) && (
+                            <p className="muted">
+                              提交截止：{deadlineLabel(cls)}
+                            </p>
+                          )}
                           {!team && !detailIndividual ? (
                             <p className="muted">
                               请先在“我的 Team”创建或加入小组。
@@ -3044,7 +3070,7 @@ export default function Workbench() {
                     </p>
                     <p>
                       截止时间：
-                      {cls.deadline ? fmt(cls.deadline) : '未设置'}
+                      {deadlineLabel(cls)}
                     </p>
                     <p>
                       自动发布：
