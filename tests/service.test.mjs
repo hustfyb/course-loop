@@ -35,7 +35,7 @@ test('email auth: OTP attempts, reuse, pending registration, cross-origin and se
 test('teacher opens class with join code; student joins by class code only',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);assert.match(code,/^[A-Z0-9]{10}$/);const s=await login(x,'s@example.com');
  const bad=await req(x,'join',{code:'WRONGCODE1'},s.cookie);assert.equal(bad.status,400);assert.equal(bad.data.error,'课堂邀请码无效');
  const j=await req(x,'join',{code:code.toLowerCase()},s.cookie);assert.equal(j.status,200);assert.equal(j.data.id,kid);assert.equal((await req(x,'join',{code},s.cookie)).status,200);
- assert.equal((await req(x,'join',{code},t.cookie)).status,403);assert.equal((await req(x,'classes',{courseId:cid},s.cookie)).status,403);assert.equal((await req(x,'classes',{courseId:cid},a.cookie)).status,403);assert.equal((await req(x,'courses',{},t.cookie)).status,403);
+ assert.equal((await req(x,'join',{code},t.cookie)).status,403);assert.equal((await req(x,'classes',{courseId:cid},s.cookie)).status,403);assert.equal((await req(x,'classes',{courseId:cid},a.cookie)).status,403);assert.equal((await req(x,'courses',{},s.cookie)).status,403);
  const ts=(await req(x,'state',undefined,t.cookie)).data;assert.equal(ts.courses.length,1);assert.equal(ts.courses[0].joinCode,undefined);assert.equal(ts.classes.length,1);assert.equal(ts.classes[0].joinCode,code);assert.equal(ts.selected,kid);assert.equal(ts.students.length,1);assert.equal(ts.draft,null);assert.equal(ts.release,null);
  const ss=(await req(x,'state',undefined,s.cookie)).data;assert.equal(ss.courses.length,0);assert.equal(ss.classes.length,1);assert.equal(ss.classes[0].joinCode,undefined);assert.ok(ss.classes[0].teacherName);
  const as=(await req(x,'state',undefined,a.cookie)).data;assert.equal(as.classes.length,0);assert.equal(as.courses[0].joinCode,undefined);assert.equal(as.courseClasses.length,1);assert.equal(as.courseClasses[0].students,1);assert.equal(as.courseClasses[0].teams,0);assert.equal(as.courseClasses[0].teacherName,'teacher');});
@@ -244,10 +244,32 @@ test('course creation: blank by default, copy clones current course',async()=>{c
  const blank=(await req(x,'courses',{title:'空白课'},a));assert.equal(blank.status,200);let st=(await req(x,'state?course='+blank.data.id,undefined,a)).data;assert.equal(st.draft.experiments.length,0);assert.equal(st.draft.title,'空白课');
  x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(fixtureDraft,blank.data.id);
  const cp=(await req(x,'courses',{copyId:blank.data.id},a));st=(await req(x,'state?course='+cp.data.id,undefined,a)).data;assert.equal(st.draft.experiments.length,4);assert.equal(st.draft.experiments[0].id,'exp-1');});
+test('course ownership: 教师管理名下课程；移交仅管理员可操作',async()=>{const x=await init();const {a,t,cid,kid}=await classroom(x);
+ const tc=await req(x,'courses',{title:'教师自建课',term:'2026秋'},t.cookie);assert.equal(tc.status,200,'教师可建课');
+ assert.equal((await req(x,'course-export?course='+tc.data.id,undefined,t.cookie)).status,200,'owner 可导出名下课程');
+ assert.equal((await req(x,'course-export?course='+cid,undefined,t.cookie)).status,403,'非 owner 不能导出别人的课程');
+ assert.equal((await req(x,'course-delete',{courseId:cid},t.cookie)).status,403,'非 owner 不能删除别人的课程');
+ // 教师快照：managed 标记 + 选中名下课程时带 extras
+ const st=(await req(x,'state?course='+tc.data.id,undefined,t.cookie)).data;
+ assert.ok(st.courses.find(c=>c.id===tc.data.id).managed,'名下课程带 managed');assert.ok(!st.courses.find(c=>c.id===cid).managed,'他人课程不 managed');
+ assert.equal(st.selectedCourse,tc.data.id);assert.equal(st.draft.title,'教师自建课');assert.ok(Array.isArray(st.courseClasses));
+ // 不选课程时默认选中名下第一门，且不影响课堂态
+ const st2=(await req(x,'state',undefined,t.cookie)).data;assert.equal(st2.selectedCourse,tc.data.id);assert.equal(st2.selected,kid);
+ // 移交：教师不能操作；目标须为师生以外的合法角色；移交后权限转移
+ const t2=await login(x,'teach2@example.com','teacher');
+ assert.equal((await req(x,'course-transfer',{courseId:tc.data.id,email:'teach2@example.com'},t.cookie)).status,403,'教师不能移交');
+ assert.equal((await req(x,'course-transfer',{courseId:tc.data.id,email:'nobody@example.com'},a.cookie)).status,400,'目标用户不存在');
+ assert.equal((await req(x,'course-transfer',{courseId:tc.data.id,email:'s@x.com'},t2.cookie)).status,403);
+ await login(x,'s@x.com');assert.equal((await req(x,'course-transfer',{courseId:tc.data.id,email:'s@x.com'},a.cookie)).status,400,'目标须为教师/管理员');
+ assert.equal((await req(x,'course-transfer',{courseId:tc.data.id,email:'teach2@example.com'},a.cookie)).status,200);
+ assert.equal((await req(x,'course-export?course='+tc.data.id,undefined,t.cookie)).status,403,'移交后原 owner 失去权限');
+ assert.equal((await req(x,'course-delete',{courseId:tc.data.id},t2.cookie)).status,200,'新 owner 可删除');});
 test('course export/import: round-trip preserves draft; invalid rejected; non-admin forbidden',async()=>{const x=await init();const {a,t,cid}=await classroom(x);
  const ex=await req(x,'course-export?course='+cid,undefined,a.cookie);assert.equal(ex.status,200);const body=ex.data;assert.equal(body.format,'course-loop-course');assert.equal(body.course.experiments.length,4);assert.equal((await req(x,'course-export?course='+cid,undefined,t.cookie)).status,403);
  const im=await req(x,'course-import',{course:body.course},a.cookie);assert.equal(im.status,200,JSON.stringify(im.data));const st=(await req(x,'state?course='+im.data.id,undefined,a.cookie)).data;assert.equal(st.draft.experiments.length,4);assert.equal(st.draft.experiments[0].id,'exp-1');assert.equal(st.draft.experiments[0].rubric.reduce((n,r)=>n+r.max,0),100);
- assert.equal((await req(x,'course-import',{course:{title:''}},a.cookie)).status,400);assert.equal((await req(x,'course-import',{course:{title:'ok',experiments:[{id:'e1',title:'t',task:'t',deliverables:['d'],rubric:[{id:'r',title:'r',max:1,criteria:'c'}]}]}},a.cookie)).status,400);assert.equal((await req(x,'course-import',{course:body.course},t.cookie)).status,403);});
+ assert.equal((await req(x,'course-import',{course:{title:''}},a.cookie)).status,400);assert.equal((await req(x,'course-import',{course:{title:'ok',experiments:[{id:'e1',title:'t',task:'t',deliverables:['d'],rubric:[{id:'r',title:'r',max:1,criteria:'c'}]}]}},a.cookie)).status,400);
+ const imT=await req(x,'course-import',{course:body.course},t.cookie);assert.equal(imT.status,200,'教师可导入课程');
+ const stT=(await req(x,'state?course='+imT.data.id,undefined,t.cookie)).data;assert.equal(stT.selectedCourse,imT.data.id);assert.ok(stT.courses.find(c=>c.id===imT.data.id).managed);assert.equal(stT.draft.experiments.length,4);});
 test('grading leniency: baseline 提交映射到 60-100 区间；baseline=false 如实低分；教师改分不映射',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
  await req(x,'chat',{courseId:cid,message:'整理',fileIds:[]},a.cookie);let j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;const d=j.payload.draft;assert.equal((await req(x,'connector/finish/'+j.id,{result:{draft:d,message:'ok'}},'',{...headers,'x-job-lease':j.lease})).status,200);assert.equal((await req(x,'publish',{courseId:cid,revision:2},a.cookie)).status,200);
  const s1=await login(x,'l1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'宽松组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['print(1)'],'m.py'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;

@@ -40,6 +40,7 @@ import {
   Inbox,
   Pencil,
   ChevronDown,
+  UserCog,
 } from 'lucide-react';
 import {
   SidebarProvider,
@@ -138,6 +139,7 @@ const navsByRole: Record<string, readonly (readonly [string, string, Any])[]> =
       ['settings', '连接与设置', Settings2],
     ],
     teacher: [
+      ['studio', '课程工作台', Sparkles],
       ['classes', '我的课堂', GraduationCap],
       ['courses', '实验内容', BookOpen],
       ['teams', '班级与 Team', Users],
@@ -416,6 +418,7 @@ export default function Workbench() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('courses');
   const [selected, setSelected] = useState('');
+  const [courseSel, setCourseSel] = useState('');
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<Any[]>([]);
   const [busy, setBusy] = useState(false);
@@ -434,10 +437,22 @@ export default function Workbench() {
   const importRef = useRef<HTMLInputElement>(null);
   const refresh = useCallback(async () => {
     try {
-      const key = s.user?.role === 'admin' ? 'course' : 'class';
+      const r = s.user?.role;
+      const courseView =
+        r === 'admin' || (r === 'teacher' && (view === 'studio' || view === 'overview'));
+      const q = courseView
+        ? r === 'admin'
+          ? selected
+          : courseSel || s.selectedCourse
+        : selected;
       const state = await call(
         'state' +
-          (selected ? '?' + key + '=' + encodeURIComponent(selected) : ''),
+          (q
+            ? '?' +
+              (courseView ? 'course' : 'class') +
+              '=' +
+              encodeURIComponent(q)
+            : ''),
       );
       setS(state);
       // 网络抖动类错误在下一次成功轮询后自动消失；业务错误保留由用户关闭
@@ -451,7 +466,7 @@ export default function Workbench() {
       setError(e.message);
       setLoaded(true);
     }
-  }, [selected, s.user?.role]);
+  }, [selected, courseSel, view, s.user?.role, s.selectedCourse]);
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -479,10 +494,20 @@ export default function Workbench() {
       .catch(() => {});
     // 依赖 s：跟随 7 秒轮询同步刷新当前页
   }, [admin, view, logPage, s]);
+  const managedCourses = (s.courses || []).filter((c: Any) => c.managed);
   const course = admin
     ? s.courses?.find((c: Any) => c.id === s.selected)
-    : s.course;
+    : teacher
+      ? managedCourses.find(
+          (c: Any) => c.id === (courseSel || s.selectedCourse),
+        )
+      : s.course;
+  const chooseCourse = (id: string) =>
+    admin ? setSelected(id) : setCourseSel(id);
   const cls = s.classes?.find((c: Any) => c.id === s.selected);
+  const canManageCurrent = admin
+    ? !!course
+    : teacher && !!course && !!cls && cls.courseId === course.id;
   const effDeadline = (c: Any) =>
     c
       ? (c.primaryClassId
@@ -503,6 +528,9 @@ export default function Workbench() {
     );
   };
   const draft = s.draft || initialCourse;
+  // studio 里的预览只针对本人管理的课程；教师未选名下课程时不能串显课堂的已发布内容
+  const studioDraft = course ? draft : initialCourse;
+  const studioRelease = course ? s.release || null : null;
   const team = s.teams?.find((t: Any) => t.id === s.myTeam);
   const detailIndividual = detail?.grading === 'individual';
   const expSubs = detail
@@ -732,7 +760,7 @@ export default function Workbench() {
   async function ensureCourse() {
     if (course) return course.id;
     const r = await call('courses', {});
-    setSelected(r.id);
+    chooseCourse(r.id);
     return r.id;
   }
   async function upload(files: FileList | null, asStudent = false) {
@@ -777,7 +805,7 @@ export default function Workbench() {
     }
     await act(async () => {
       const r = await call('course-import', { course: raw });
-      setSelected(r.id);
+      chooseCourse(r.id);
       setNotice('课程已导入，请检查内容后发布');
     });
   }
@@ -836,7 +864,7 @@ export default function Workbench() {
       admin
         ? '确认内容后发布，课堂里的学生看到的是已发布版本。'
         : teacher
-          ? '课程管理员发布的实验内容，你的课堂按此进行。'
+          ? '课程负责人发布的实验内容，你的课堂按此进行。'
           : '每次提交都会立即评分，最终取最高分计成绩。',
     ],
     overview: [
@@ -1015,10 +1043,18 @@ export default function Workbench() {
           </SidebarGroup>
           <div className="sidebar-course">
             <span className="tiny-label">
-              {!s.user || admin ? '当前课程' : '当前课堂'}
+              {!s.user ||
+              admin ||
+              (teacher && (view === 'studio' || view === 'overview') && course)
+                ? '当前课程'
+                : '当前课堂'}
             </span>
-            {!s.user || admin ? (
-              s.courses?.length ? (
+            {!s.user ||
+            admin ||
+            (teacher &&
+              (view === 'studio' || view === 'overview') &&
+              course) ? (
+              (admin ? s.courses?.length : managedCourses.length) ? (
                 <>
                   <strong>{course?.title || '未选择课程'}</strong>
                   <span>
@@ -1183,17 +1219,30 @@ export default function Workbench() {
               </div>
               {admin ? (
                 view === 'studio' && (
-                  <Button className="primary" onClick={() => open('newCourse')}>
+                  <Button
+                    className="primary"
+                    onClick={() => open('newCourse')}
+                  >
                     <Plus size={17} />
                     新建课程
                   </Button>
                 )
               ) : teacher ? (
-                view === 'classes' && (
-                  <Button className="primary" onClick={() => open('newClass')}>
+                view === 'studio' ? (
+                  <Button
+                    className="primary"
+                    onClick={() => open('newCourse')}
+                  >
                     <Plus size={17} />
-                    开设课堂
+                    新建课程
                   </Button>
+                ) : (
+                  view === 'classes' && (
+                    <Button className="primary" onClick={() => open('newClass')}>
+                      <Plus size={16} />
+                      开设课堂
+                    </Button>
+                  )
                 )
               ) : s.user ? null : (
                 <Button className="primary" onClick={() => open('login')}>
@@ -1203,23 +1252,29 @@ export default function Workbench() {
               )}
             </div>
           </div>
-          {view === 'studio' && admin && (
+          {view === 'studio' && (admin || teacher) && (
             <>
               <section className="panel data-panel">
                 <h2>课程管理</h2>
                 <div className="lab-grid">
-                  {s.courses?.map((c: Any) => (
+                  {(admin ? s.courses : managedCourses)?.map((c: Any) => (
                     <div
                       className={
                         'lab-card panel' +
-                        (s.selected === c.id ? ' chosen' : '')
+                        ((admin ? s.selected : courseSel || s.selectedCourse) ===
+                        c.id
+                          ? ' chosen'
+                          : '')
                       }
                       key={c.id}
                       role="button"
                       tabIndex={0}
                       onClick={() => {
-                        if (s.selected !== c.id) {
-                          setSelected(c.id);
+                        if (
+                          (admin ? s.selected : courseSel || s.selectedCourse) !==
+                          c.id
+                        ) {
+                          chooseCourse(c.id);
                           setAttachments([]);
                           setDetail(null);
                         }
@@ -1227,7 +1282,7 @@ export default function Workbench() {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          setSelected(c.id);
+                          chooseCourse(c.id);
                         }
                       }}
                     >
@@ -1243,7 +1298,10 @@ export default function Workbench() {
                       </p>
                       <div className="lab-bottom">
                         <span className="lab-status">
-                          {s.selected === c.id ? '正在编排' : '点击编排内容'}
+                          {(admin ? s.selected : courseSel || s.selectedCourse) ===
+                          c.id
+                            ? '正在编排'
+                            : '点击编排内容'}
                         </span>
                         <span className="lab-actions">
                           <a
@@ -1255,6 +1313,21 @@ export default function Workbench() {
                             <Download size={13} />
                             导出
                           </a>
+                          {admin && (
+                            <button
+                              className="lab-action"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                open('transfer', {
+                                  courseId: c.id,
+                                  title: c.title,
+                                });
+                              }}
+                            >
+                              <UserCog size={13} />
+                              移交
+                            </button>
+                          )}
                           <button
                             className="lab-action danger"
                             aria-label={'删除 ' + c.title}
@@ -1481,20 +1554,20 @@ export default function Workbench() {
                   <div className="preview-heading">
                     <span className="tiny-label">课程预览</span>
                     <span className="tag blue">
-                      {draft.experiments.length} 次实验
+                      {studioDraft.experiments.length} 次实验
                     </span>
                   </div>
-                  <h2>{draft.title}</h2>
-                  <p className="muted">{draft.description}</p>
+                  <h2>{studioDraft.title}</h2>
+                  <p className="muted">{studioDraft.description}</p>
                   <div className="course-facts">
                     <span>32 学时</span>
                     <span>8 周</span>
                     <span>Team 协作</span>
                   </div>
-                  {draft.questions?.length > 0 && (
+                  {studioDraft.questions?.length > 0 && (
                     <div className="questions">
                       <strong>需要你确认</strong>
-                      {draft.questions.map((q: string, i: number) => (
+                      {studioDraft.questions.map((q: string, i: number) => (
                         <button
                           key={i}
                           onClick={() => setMessage(`关于“${q}”，我的决定是：`)}
@@ -1506,7 +1579,7 @@ export default function Workbench() {
                     </div>
                   )}
                   <div className="experiment-list">
-                    {draft.experiments.map((e: Any, i: number) => (
+                    {studioDraft.experiments.map((e: Any, i: number) => (
                       <button
                         key={e.id}
                         className="experiment-card"
@@ -1540,8 +1613,8 @@ export default function Workbench() {
                   <div className="preview-bottom">
                     <span>
                       <span className="dot" />
-                      {s.release
-                        ? `已发布 v${s.release.revision}`
+                      {studioRelease
+                        ? `已发布 v${studioRelease.revision}`
                         : '预置课程 · 待发布'}
                     </span>
                     <Button variant="outline" onClick={() => go('courses')}>
@@ -1553,7 +1626,7 @@ export default function Workbench() {
               </div>
             </>
           )}
-          {view === 'overview' && admin && (
+          {view === 'overview' && (admin || teacher) && (
             <>
               {!course ? (
                 <Empty
@@ -1603,7 +1676,7 @@ export default function Workbench() {
                               onClick={() =>
                                 act(async () => {
                                   await call('course-primary', {
-                                    courseId: s.selected,
+                                    courseId: course?.id,
                                     classId: c.id,
                                   });
                                   setNotice(
@@ -1821,7 +1894,7 @@ export default function Workbench() {
                                 ? '学生可见'
                                 : '教师内部'}
                             </span>
-                            {admin && (
+                            {canManageCurrent && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1837,7 +1910,7 @@ export default function Workbench() {
                                   : '共享给学生'}
                               </Button>
                             )}
-                            {admin && (
+                            {canManageCurrent && (
                               <button
                                 className="text-action danger"
                                 onClick={() =>
@@ -1856,15 +1929,15 @@ export default function Workbench() {
                   )}
                   <div className="toolbar">
                     <span className="muted">
-                      {admin
+                      {canManageCurrent
                         ? '确认内容后发布，学生看到的是已发布版本。'
                         : teacher
-                          ? '以下为课程管理员发布的实验内容，只读。'
+                          ? '以下为课程负责人发布的实验内容；如需修改请在「课程工作台」编排。'
                           : s.release
                             ? '以下是已发布的实验要求。'
                             : '实验发布后即可提交作业。'}
                     </span>
-                    {admin && (
+                    {canManageCurrent && (
                       <Button
                         disabled={
                           busy ||
@@ -1936,8 +2009,10 @@ export default function Workbench() {
                       title="实验尚未发布"
                       body={
                         teacher
-                          ? '课程管理员发布实验后，你的课堂即可开始。'
-                          : '等待课程管理员发布实验任务。'
+                          ? canManageCurrent
+                            ? '你是本课程负责人，可在「课程工作台」编排并发布实验。'
+                            : '课程负责人发布实验后，你的课堂即可开始。'
+                          : '等待课程负责人发布实验任务。'
                       }
                     />
                   )}
@@ -3131,6 +3206,7 @@ export default function Workbench() {
                     profile: '完善个人信息',
                     newCourse: '新建课程',
                     delCourse: '删除课程',
+                    transfer: '移交课程负责人',
                     delFile: '删除课程素材',
                     newClass: '开设课堂',
                     join: '加入课堂',
@@ -3361,7 +3437,7 @@ export default function Workbench() {
                       title: form.title || undefined,
                       term: form.term || undefined,
                     });
-                    setSelected(r.id);
+                    chooseCourse(r.id);
                     setModal(null);
                     setView('studio');
                   })
@@ -3577,12 +3653,46 @@ export default function Workbench() {
                   act(async () => {
                     await call('course-delete', { courseId: modal.courseId });
                     if (s.selected === modal.courseId) setSelected('');
+                    if (courseSel === modal.courseId) setCourseSel('');
                     setModal(null);
                     setNotice('课程已删除');
                   })
                 }
               >
                 确认删除
+              </Button>
+            </>
+          )}
+          {modal?.type === 'transfer' && (
+            <>
+              <p>
+                将课程 <strong>{modal.title}</strong>{' '}
+                的负责人移交给另一位教师。移交后，对方可以编辑实验、发布、删除课程与管理素材；你将失去该课程的管理权限。
+              </p>
+              <label>
+                接收教师的邮箱
+                <Input
+                  placeholder="teacher@example.edu.cn"
+                  value={form.email || ''}
+                  onChange={(e) => field('email', e.target.value)}
+                />
+              </label>
+              <p className="muted">对方必须已注册为教师账号。</p>
+              <Button
+                disabled={busy || !form.email}
+                onClick={() =>
+                  act(async () => {
+                    await call('course-transfer', {
+                      courseId: modal.courseId,
+                      email: form.email,
+                    });
+                    setModal(null);
+                    setForm({});
+                    setNotice('课程负责人已移交');
+                  })
+                }
+              >
+                确认移交
               </Button>
             </>
           )}
@@ -3640,7 +3750,7 @@ export default function Workbench() {
                 onClick={() =>
                   mutation(
                     'publish',
-                    { courseId: s.selected, revision: course.revision },
+                    { courseId: course?.id, revision: course.revision },
                     '课程已发布，课堂可开始实验',
                   )
                 }
