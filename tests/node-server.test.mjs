@@ -111,8 +111,7 @@ test('端到端：进程内 runner 完成 draft 与 grade 任务；SMTP 未配�
   const hist=(await call(base,'state',undefined,admin.cookie)).data.assistHistory;
   assert.equal(hist.length,2);assert.deepEqual(hist.map(h=>h.role),['user','assistant']);assert.equal(hist[1].content,'ok');
   const mails=app.sqlite.prepare("SELECT status FROM jobs WHERE kind='email'").all();
-  assert.ok(mails.length>0,'登录验证码应产生邮件任务');
-  assert.ok(mails.every(m=>m.status==='queued'),'SMTP 未配置时邮件任务不得投递');
+  assert.equal(mails.length,0,'Dev 模式登录固定验证码，不产生邮件任务');
   // print 模式断言：任务调用带 @PROMPT.md 且文件存在；探测带 --no-tools，任务调用带工具
   const calls=await readPiLog(logFile);
   assert.ok(calls.length>=3,'探测 + draft + grade 至少三次调用');

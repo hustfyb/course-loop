@@ -115,6 +115,13 @@ test('migration 0001 preserves legacy course data in a default class',async()=>{
  for(const f of files.slice(3))sqlite.exec(await fs.readFile('drizzle/'+f,'utf8'));
  const sub=sqlite.prepare("SELECT teamId,studentId FROM submissions WHERE id='s1'").get();assert.equal(sub.teamId,'tm1');assert.equal(sub.studentId,null);});
 test('mail quota failure surfaces try-tomorrow hint; other failures do not block',async()=>{const x=await init();x.env.LOCAL_DEV='0';x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?)").run(JSON.stringify({mailAt:Date.now()}));x.sqlite.prepare("INSERT INTO jobs(id,owner,kind,payload,status,error,created) VALUES('jq','system','email','{}','failed',?,?)").run('Message failed: 429 rate_limit_exceeded: daily quota exceeded',Date.now());const r=await req(x,'auth/request',{email:'q@example.com'});assert.equal(r.status,429);assert.match(r.data.error,/额度已用完.*明天再试/);x.sqlite.prepare("UPDATE jobs SET error='Message failed: 550 Invalid to field' WHERE id='jq'").run();const ok=await req(x,'auth/request',{email:'q2@example.com'});assert.equal(ok.status,200);});
+test('dev hosts: DEV_HOSTS 名单内的公网主机名走本地登录（固定码、不入邮件队列），名单外不受影响',async()=>{const x=await init();x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?)").run(JSON.stringify({mailAt:Date.now()}));const envD={...x.env,DEV_HOSTS:'demo.example.com, demo2.example.cn'};
+ const a=await api(new Request('http://demo.example.com/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'dh@example.com'})}),envD);assert.equal(a.status,200);assert.match((await a.json()).message,/邮件未真实发送/);
+ assert.equal((await api(new Request('http://demo.example.com/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'dh@example.com',code:'123456'})}),envD)).status,200,'固定 Dev 码可在公网域名登录');
+ assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM jobs WHERE kind='email'").get().n,0,'Dev 域名不产生邮件任务');
+ const o=await api(new Request('http://other.example.com/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'oh@example.com'})}),envD);assert.equal(o.status,200);assert.match((await o.json()).message,/邮件投递队列/);
+ assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM jobs WHERE kind='email'").get().n,1,'名单外仍走真实邮件');
+ const g=await api(new Request('http://demo.example.com/api/state'),envD);assert.equal((await g.json()).local,true,'Dev 域名 state 标记 local');});
 test('assist: 注入 runAssist 返回回复并记录双方消息；未注入 503 不写 assistant；未登录 401',async()=>{const x=await init();
  // 未登录 401
  assert.equal((await req(x,'assist',{message:'怎么用'})).status,401);

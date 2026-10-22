@@ -46,7 +46,7 @@ export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'d
  await migrate(sqlite,drizzleDir);
  const filesDir=path.join(dataDir,'files');const workRoot=path.join(dataDir,'agent-work');mkdirSync(workRoot,{recursive:true});
  const api=await loadApi(path.join(dataDir,'.modules'));
- const platform={DB:wrapD1(sqlite),FILES:localFiles(filesDir),ADMIN_EMAILS:env.ADMIN_EMAILS||'',LOCAL_DEV:env.LOCAL_DEV||'',DEV_EMAIL_CODE:env.DEV_EMAIL_CODE||'',piRescan:()=>scan().catch(()=>{})};
+ const platform={DB:wrapD1(sqlite),FILES:localFiles(filesDir),ADMIN_EMAILS:env.ADMIN_EMAILS||'',LOCAL_DEV:env.LOCAL_DEV||'',DEV_EMAIL_CODE:env.DEV_EMAIL_CODE||'',DEV_HOSTS:env.DEV_HOSTS||'',piRescan:()=>scan().catch(()=>{})};
  const readHealth=()=>{const row=sqlite.prepare("SELECT value FROM settings WHERE key='connector_health'").get();return row?JSON.parse(row.value):{};};
  const updateHealth=(patch)=>sqlite.prepare("INSERT INTO settings VALUES('connector_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({...readHealth(),...patch}));
  // 进程内 runner 凭据：启动时生成并覆盖写 settings.connector_token（与 pair 端点同格式；自托管模式下 pair 无意义）。
