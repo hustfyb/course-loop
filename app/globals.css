@@ -201,3 +201,14 @@ tr.sub-detail-row>td{padding:0 14px;white-space:normal}
 .pi-model-menu>button:hover{background:#f2f6ff}
 .pi-model-menu span{font-size:11px;color:#3b8a5c}
 .pi-model-menu>button small{margin-left:8px;font-size:11px}
+
+/* 课堂设置：信息行 + 底部操作按钮 */
+.settings-facts{margin:22px 0 0;border-top:1px solid #e8edf5}
+.settings-facts>div{display:grid;grid-template-columns:96px minmax(0,1fr);gap:16px;align-items:baseline;padding:13px 0;border-bottom:1px solid #edf1f7}
+.settings-facts dt{font-size:13px;color:#8b98ab}
+.settings-facts dd{margin:0;font-size:14px;line-height:1.75;color:#455570}
+.settings-facts dd .muted{color:#a3aebe}
+.settings-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.settings-card>.button-row{margin-top:0}
+.settings-card>h2+p{margin-bottom:16px}
+.settings-card [data-slot=button]{font-size:13px}

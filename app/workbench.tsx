@@ -3190,39 +3190,67 @@ export default function Workbench() {
                     <p>
                       {cls.courseTitle} · {cls.term}
                     </p>
-                    <div className="button-row">
+                    <Button
+                      variant="outline"
+                      onClick={() => cp(cls.joinCode)}
+                    >
+                      <Copy size={15} />
+                      课堂邀请码：{cls.joinCode}
+                    </Button>
+                    <dl className="settings-facts">
+                      <div>
+                        <dt>小组规模</dt>
+                        <dd>
+                          最多 {cls.maxSize} 人 · 每实验最多提交 3
+                          次，取最高分计成绩
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>提交截止</dt>
+                        <dd>{deadlineLabel(cls)}</dd>
+                      </div>
+                      <div>
+                        <dt>自动发布</dt>
+                        <dd>
+                          {cls.autoPublish ? '已启用' : '关闭，待校准后启用'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>补交窗口</dt>
+                        <dd>
+                          {classMakeup ? (
+                            <>
+                              {fmt(classMakeup.start)} –{' '}
+                              {fmt(classMakeup.end)} · 扣{' '}
+                              {classMakeup.discount}%
+                            </>
+                          ) : (
+                            <span className="muted">未设置</span>
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="settings-actions">
                       <Button
                         variant="outline"
-                        onClick={() => cp(cls.joinCode)}
+                        onClick={() => {
+                          open('settings');
+                          setForm({
+                            maxSize: cls.maxSize,
+                            deadline: cls.deadline
+                              ? new Date(
+                                  cls.deadline -
+                                    new Date().getTimezoneOffset() * 60000,
+                                )
+                                  .toISOString()
+                                  .slice(0, 16)
+                              : '',
+                            autoPublish: !!cls.autoPublish,
+                          });
+                        }}
                       >
-                        <Copy size={15} />
-                        课堂邀请码：{cls.joinCode}
+                        修改课堂规则
                       </Button>
-                    </div>
-                    <p>
-                      小组最多 {cls.maxSize} 人 · 每实验最多提交 3
-                      次，取最高分计成绩
-                    </p>
-                    <p>
-                      截止时间：
-                      {deadlineLabel(cls)}
-                    </p>
-                    <p>
-                      自动发布：
-                      {cls.autoPublish ? '已启用' : '关闭，待校准后启用'}
-                    </p>
-                    <p>
-                      补交：
-                      {classMakeup ? (
-                        <>
-                          {fmt(classMakeup.start)} – {fmt(classMakeup.end)} ·
-                          扣 {classMakeup.discount}%
-                        </>
-                      ) : (
-                        '未设置'
-                      )}
-                    </p>
-                    <div className="button-row">
                       <Button
                         variant="outline"
                         onClick={() => {
@@ -3241,26 +3269,6 @@ export default function Workbench() {
                         补交设置
                       </Button>
                     </div>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        open('settings');
-                        setForm({
-                          maxSize: cls.maxSize,
-                          deadline: cls.deadline
-                            ? new Date(
-                                cls.deadline -
-                                  new Date().getTimezoneOffset() * 60000,
-                              )
-                                .toISOString()
-                                .slice(0, 16)
-                            : '',
-                          autoPublish: !!cls.autoPublish,
-                        });
-                      }}
-                    >
-                      修改课堂规则
-                    </Button>
                   </section>
                 </div>
               )
