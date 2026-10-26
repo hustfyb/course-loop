@@ -508,8 +508,13 @@ export default function Workbench() {
   const canManageCurrent = admin
     ? !!course
     : teacher && !!course && !!cls && cls.courseId === course.id;
+  const makeupList: Any[] = admin
+    ? s.makeups || []
+    : canManageCurrent
+      ? s.studioMakeups || []
+      : s.makeups || [];
   const makeupOf = (eid: string) =>
-    (s.makeups || []).find((m: Any) => m.experimentId === eid) || null;
+    makeupList.find((m: Any) => m.experimentId === eid) || null;
   const localInput = (ms: number) =>
     new Date(ms - new Date().getTimezoneOffset() * 60000)
       .toISOString()
@@ -534,9 +539,14 @@ export default function Workbench() {
     );
   };
   const draft = s.draft || initialCourse;
-  // studio 里的预览只针对本人管理的课程；教师未选名下课程时不能串显课堂的已发布内容
-  const studioDraft = course ? draft : initialCourse;
-  const studioRelease = course ? s.release || null : null;
+  // 教师：编排数据只来自 studio* 专用字段；管理员：state 本身就是课程视图，沿用原字段
+  const studioDraft = (admin ? s.draft : s.studioDraft) || initialCourse;
+  const studioRelease = (admin ? s.release : s.studioRelease) || null;
+  const studioPublishedDraft = admin ? s.publishedDraft : s.studioPublishedDraft;
+  const studioMessages: Any[] = (admin ? s.messages : s.studioMessages) || [];
+  const studioJobs: Any[] = (admin ? s.jobs : s.studioJobs) || [];
+  const studioFiles: Any[] = (admin ? s.files : s.studioFiles) || [];
+  const studioClasses: Any[] = (admin ? s.courseClasses : s.studioClasses) || [];
   const team = s.teams?.find((t: Any) => t.id === s.myTeam);
   const detailIndividual = detail?.grading === 'individual';
   const expSubs = detail
@@ -828,17 +838,17 @@ export default function Workbench() {
     setAttachments([]);
     setMessage('');
   };
-  const changes = s.publishedDraft
-    ? draft.experiments
+  const changes = studioPublishedDraft
+    ? studioDraft.experiments
         .filter(
           (e: Any) =>
             JSON.stringify(e) !==
             JSON.stringify(
-              s.publishedDraft.experiments.find((p: Any) => p.id === e.id),
+              studioPublishedDraft.experiments.find((p: Any) => p.id === e.id),
             ),
         )
         .map((e: Any) => e.title)
-    : draft.experiments.map((e: Any) => e.title);
+    : studioDraft.experiments.map((e: Any) => e.title);
   const cp = (v: string) =>
     act(async () => {
       await navigator.clipboard.writeText(v);
@@ -1403,9 +1413,9 @@ export default function Workbench() {
                     </span>
                   </div>
                   <div className="conversation-body">
-                    {s.messages?.length ? (
+                    {studioMessages.length ? (
                       <div className="messages">
-                        {s.messages.map((m: Any) => (
+                        {studioMessages.map((m: Any) => (
                           <article className={'message ' + m.role} key={m.id}>
                             <div className="message-label">
                               {m.role === 'user' ? '你' : '小课'}
@@ -1420,7 +1430,7 @@ export default function Workbench() {
                                   key={fid}
                                 >
                                   <Paperclip size={13} />
-                                  {s.files?.find((f: Any) => f.id === fid)
+                                  {studioFiles.find((f: Any) => f.id === fid)
                                     ?.name || '附件'}
                                 </a>
                               ),
@@ -1464,7 +1474,7 @@ export default function Workbench() {
                         </div>
                       </>
                     )}
-                    {s.jobs
+                    {studioJobs
                       ?.filter((j: Any) => j.status !== 'complete')
                       .slice(0, 3)
                       .map((j: Any) => (
@@ -1650,12 +1660,12 @@ export default function Workbench() {
                 <>
                   <div className="toolbar">
                     <span className="muted">
-                      {s.courseClasses?.length || 0} 个课堂 ·
+                      {studioClasses.length} 个课堂 ·
                       教师凭课堂邀请码招收学生
                     </span>
                   </div>
                   <div className="teams-grid">
-                    {s.courseClasses?.map((c: Any) => (
+                    {studioClasses.map((c: Any) => (
                       <section className="panel team-card" key={c.id}>
                         <div className="section-heading">
                           <div className="team-title">
@@ -1705,7 +1715,7 @@ export default function Workbench() {
                       </section>
                     ))}
                   </div>
-                  {!s.courseClasses?.length && (
+                  {!studioClasses.length && (
                     <Empty
                       title="还没有课堂"
                       body="教师注册后可以在「我的课堂」选择本课程开设课堂。"

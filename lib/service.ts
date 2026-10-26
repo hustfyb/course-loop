@@ -58,8 +58,10 @@ export async function api(req:Request,env:Platform){
   }
   if(u.role==='teacher'){
    const courses=await all('SELECT id,title,term,owner,publishedId,revision,(SELECT COUNT(*) FROM classes WHERE classes.courseId=courses.id) AS classCount FROM courses ORDER BY created');
-   const owned=courses.filter((x:any)=>x.owner===u.id);const cc=url.searchParams.get('course')||owned[0]?.id;const sel=cc&&owned.find((x:any)=>x.id===cc);let cextra:any={};
-   if(sel){const full=await one('SELECT * FROM courses WHERE id=?',sel.id);cextra={selectedCourse:sel.id,...(await courseExtras(full))};}
+   const owned=courses.filter((x:any)=>x.owner===u.id);const cc=url.searchParams.get('course');const sel=cc&&owned.find((x:any)=>x.id===cc);let cextra:any={};
+   // 编排数据只在显式 ?course= 时下发，且独立命名，绝不覆盖课堂的 draft/release（否则会串课）
+   if(sel){const full=await one('SELECT * FROM courses WHERE id=?',sel.id);const ex=await courseExtras(full);cextra={selectedCourse:sel.id,studioDraft:ex.draft,studioPublishedDraft:ex.publishedDraft,studioRelease:ex.release,studioMessages:ex.messages,studioJobs:ex.jobs,studioFiles:ex.files,studioClasses:ex.courseClasses,studioPrimaryClassId:ex.primaryClassId,studioMakeups:ex.makeups};}
+   else if(owned.length)cextra={selectedCourse:owned[0].id};
    const ks=await all('SELECT classes.*,courses.title as courseTitle,courses.term as term,courses.primaryClassId,(SELECT name FROM classes p WHERE p.id=courses.primaryClassId) as primaryName,(SELECT deadline FROM classes p WHERE p.id=courses.primaryClassId) as primaryDeadline FROM classes JOIN courses ON courses.id=classes.courseId WHERE classes.owner=? ORDER BY classes.created',u.id);
    const kid=url.searchParams.get('class')||ks[0]?.id;const k=ks.find((x:any)=>x.id===kid);return {...base,courses:courses.map((x:any)=>({...x,managed:x.owner===u.id})),classes:ks.map((x:any)=>({...classCard(x),isPrimary:x.id===x.primaryClassId,primaryClassId:x.primaryClassId,primaryName:x.primaryName,primaryDeadline:x.primaryDeadline})),...(k?await classDetail(k,u,true):{}),...cextra};
   }

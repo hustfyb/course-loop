@@ -291,7 +291,7 @@ test('course ownership: 教师管理名下课程；移交仅管理员可操作',
  // 教师快照：managed 标记 + 选中名下课程时带 extras
  const st=(await req(x,'state?course='+tc.data.id,undefined,t.cookie)).data;
  assert.ok(st.courses.find(c=>c.id===tc.data.id).managed,'名下课程带 managed');assert.ok(!st.courses.find(c=>c.id===cid).managed,'他人课程不 managed');
- assert.equal(st.selectedCourse,tc.data.id);assert.equal(st.draft.title,'教师自建课');assert.ok(Array.isArray(st.courseClasses));
+ assert.equal(st.selectedCourse,tc.data.id);assert.equal(st.studioDraft.title,'教师自建课');assert.ok(Array.isArray(st.studioClasses));assert.equal(st.draft,null,'编排数据不覆盖课堂 draft');assert.equal(st.release,null,'编排数据不覆盖课堂 release');
  // 不选课程时默认选中名下第一门，且不影响课堂态
  const st2=(await req(x,'state',undefined,t.cookie)).data;assert.equal(st2.selectedCourse,tc.data.id);assert.equal(st2.selected,kid);
  // 移交：教师不能操作；目标须为师生以外的合法角色；移交后权限转移
@@ -308,7 +308,7 @@ test('course export/import: round-trip preserves draft; invalid rejected; non-ad
  const im=await req(x,'course-import',{course:body.course},a.cookie);assert.equal(im.status,200,JSON.stringify(im.data));const st=(await req(x,'state?course='+im.data.id,undefined,a.cookie)).data;assert.equal(st.draft.experiments.length,4);assert.equal(st.draft.experiments[0].id,'exp-1');assert.equal(st.draft.experiments[0].rubric.reduce((n,r)=>n+r.max,0),100);
  assert.equal((await req(x,'course-import',{course:{title:''}},a.cookie)).status,400);assert.equal((await req(x,'course-import',{course:{title:'ok',experiments:[{id:'e1',title:'t',task:'t',deliverables:['d'],rubric:[{id:'r',title:'r',max:1,criteria:'c'}]}]}},a.cookie)).status,400);
  const imT=await req(x,'course-import',{course:body.course},t.cookie);assert.equal(imT.status,200,'教师可导入课程');
- const stT=(await req(x,'state?course='+imT.data.id,undefined,t.cookie)).data;assert.equal(stT.selectedCourse,imT.data.id);assert.ok(stT.courses.find(c=>c.id===imT.data.id).managed);assert.equal(stT.draft.experiments.length,4);});
+ const stT=(await req(x,'state?course='+imT.data.id,undefined,t.cookie)).data;assert.equal(stT.selectedCourse,imT.data.id);assert.ok(stT.courses.find(c=>c.id===imT.data.id).managed);assert.equal(stT.studioDraft.experiments.length,4);});
 test('grading leniency: baseline 提交映射到 60-100 区间；baseline=false 如实低分；教师改分不映射',async()=>{const x=await init();const {a,cid,kid,code}=await classroom(x);const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
  await req(x,'chat',{courseId:cid,message:'整理',fileIds:[]},a.cookie);let j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;const d=j.payload.draft;assert.equal((await req(x,'connector/finish/'+j.id,{result:{draft:d,message:'ok'}},'',{...headers,'x-job-lease':j.lease})).status,200);assert.equal((await req(x,'publish',{courseId:cid,revision:2},a.cookie)).status,200);
  const s1=await login(x,'l1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'宽松组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['print(1)'],'m.py'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
