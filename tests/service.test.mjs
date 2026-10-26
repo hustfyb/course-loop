@@ -96,7 +96,7 @@ test('capacity, unregistered invitation visibility, cancellation and unresolved 
  const j=(await req(x,'chat',{courseId:cid,message:'改任务'},a.cookie)).data.jobId;assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,409);
  assert.equal((await req(x,'job-action',{id:j,action:'cancel'},t.cookie)).status,403);await req(x,'job-action',{id:j,action:'cancel'},a.cookie);
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses').get().draft);d.questions=['MCP 是否必做？'];x.sqlite.prepare('UPDATE courses SET draft=?').run(JSON.stringify(d));assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,400);});
-test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,7);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
+test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,8);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
  const t=Date.now();sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u1','t@x.com','教师','','teacher',t);sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u2','s@x.com','学生','001','student',t);
  sqlite.prepare("INSERT INTO courses(id,owner,title,term,draft,joinCode,maxSize,deadline,maxFormal,autoPublish,created) VALUES('c1','u1','课','学期','{}','CODE123456',5,NULL,3,1,?)").run(t);
  sqlite.prepare("INSERT INTO enrollments VALUES('c1','u2')").run();sqlite.prepare("INSERT INTO teams VALUES('tm1','c1','u2','组',0,?)").run(t);sqlite.prepare("INSERT INTO members VALUES('c1','tm1','u2',1)").run();sqlite.prepare("INSERT INTO invites VALUES('iv1','tm1','n@x.com','pending',?)").run(t);
@@ -115,13 +115,45 @@ test('migration 0001 preserves legacy course data in a default class',async()=>{
  for(const f of files.slice(3))sqlite.exec(await fs.readFile('drizzle/'+f,'utf8'));
  const sub=sqlite.prepare("SELECT teamId,studentId FROM submissions WHERE id='s1'").get();assert.equal(sub.teamId,'tm1');assert.equal(sub.studentId,null);});
 test('mail quota failure surfaces try-tomorrow hint; other failures do not block',async()=>{const x=await init();x.env.LOCAL_DEV='0';x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?)").run(JSON.stringify({mailAt:Date.now()}));x.sqlite.prepare("INSERT INTO jobs(id,owner,kind,payload,status,error,created) VALUES('jq','system','email','{}','failed',?,?)").run('Message failed: 429 rate_limit_exceeded: daily quota exceeded',Date.now());const r=await req(x,'auth/request',{email:'q@example.com'});assert.equal(r.status,429);assert.match(r.data.error,/额度已用完.*明天再试/);x.sqlite.prepare("UPDATE jobs SET error='Message failed: 550 Invalid to field' WHERE id='jq'").run();const ok=await req(x,'auth/request',{email:'q2@example.com'});assert.equal(ok.status,200);});
-test('dev hosts: DEV_HOSTS 名单内的公网主机名走本地登录（固定码、不入邮件队列），名单外不受影响',async()=>{const x=await init();x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?)").run(JSON.stringify({mailAt:Date.now()}));const envD={...x.env,DEV_HOSTS:'demo.example.com, demo2.example.cn'};
- const a=await api(new Request('http://demo.example.com/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'dh@example.com'})}),envD);assert.equal(a.status,200);assert.match((await a.json()).message,/邮件未真实发送/);
+test('dev hosts: DEV_HOSTS 名单内的公网主机名走本地登录（固定码、不入邮件队列），名单外不受影响',async()=>{const x=await init();x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?)").run(JSON.stringify({mailAt:Date.now()}));const envD={...x.env,DEV_HOSTS:'demo.example.com, demo2.example.cn'}; const a=await api(new Request('http://demo.example.com/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'dh@example.com'})}),envD);assert.equal(a.status,200);assert.match((await a.json()).message,/邮件未真实发送/);
  assert.equal((await api(new Request('http://demo.example.com/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'dh@example.com',code:'123456'})}),envD)).status,200,'固定 Dev 码可在公网域名登录');
  assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM jobs WHERE kind='email'").get().n,0,'Dev 域名不产生邮件任务');
  const o=await api(new Request('http://other.example.com/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'oh@example.com'})}),envD);assert.equal(o.status,200);assert.match((await o.json()).message,/邮件投递队列/);
  assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM jobs WHERE kind='email'").get().n,1,'名单外仍走真实邮件');
  const g=await api(new Request('http://demo.example.com/api/state'),envD);assert.equal((await g.json()).local,true,'Dev 域名 state 标记 local');});
+test('makeup submission: 过截止时间需补交窗口放行，评分按折扣扣减，按时提交不打折，重评沿用提交时折扣',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'mk1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'补交组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,kid);
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'无补交配置时拒绝');
+ // 补交配置仅课程负责人/管理员可设
+ const iso=(ms)=>new Date(ms).toISOString();
+ assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:10},t.cookie)).status,403);
+ assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:95},a.cookie)).status,400,'折扣超范围');
+ assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()+3600000),end:iso(Date.now()+1000),discount:10},a.cookie)).status,400,'起止倒挂');
+ assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:10},a.cookie)).status,200,'窗口未开');
+ assert.match((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).data.error,/尚未开始/);
+ assert.ok((await req(x,'state',undefined,s1.cookie)).data.makeups.some(m=>m.experimentId==='exp-1'&&m.discount===10),'makeups 随学生快照下发');
+ // 窗口开放 → 放行并打标记，任务载荷带折扣
+ assert.equal(x.sqlite.prepare('UPDATE makeups SET start=? WHERE courseId=?').run(Date.now()-1000,cid).changes,1);
+ const sub=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(sub.status,200);assert.equal(sub.data.makeup,true);assert.equal(sub.data.discount,10);
+ assert.equal(x.sqlite.prepare('SELECT makeup FROM submissions WHERE id=?').get(sub.data.id).makeup,10,'makeup 列存折扣百分数');
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const job=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(job.payload.discount,10);
+ const mkRes=(payload)=>({items:payload.experiment.rubric.map(r=>({id:r.id,score:r.max,reason:'全部满足',evidence:['a.md:1']})),suggestions:[],total:payload.experiment.rubric.reduce((n,r)=>n+r.max,0)});
+ assert.equal((await req(x,'connector/finish/'+job.id,{result:mkRes(job.payload)},'',{...headers,'x-job-lease':job.lease})).status,200);
+ const rep=JSON.parse(x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(sub.data.id).report);
+ assert.equal(rep.total,90,'满分补交扣 10% → 90');assert.ok(rep.makeup&&rep.makeup.discount===10);assert.equal(rep.items.find(i=>i.id==='r1').score,54,'单项同步打折 60→54');
+ // 按时提交（截止改到未来）不打折
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()+86400000,kid);
+ const sub2=await req(x,'submit',{experimentId:'exp-2',fileIds:[fid]},s1.cookie);assert.equal(sub2.status,200);assert.equal(sub2.data.makeup,false);
+ const job2=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(job2.payload.submissionId,sub2.data.id);assert.ok(!job2.payload.discount);
+ assert.equal((await req(x,'connector/finish/'+job2.id,{result:mkRes(job2.payload)},'',{...headers,'x-job-lease':job2.lease})).status,200);
+ assert.equal(JSON.parse(x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(sub2.data.id).report).total,100,'按时提交不折扣');
+ // 重评：即使补交配置已删除，仍沿用提交时记录的折扣
+ x.sqlite.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(job.id);
+ assert.equal((await req(x,'grade-retry',{submissionId:sub.data.id},t.cookie)).status,200);
+ const nj=x.sqlite.prepare('SELECT payload FROM jobs WHERE id=(SELECT jobId FROM submissions WHERE id=?)').get(sub.data.id);assert.equal(JSON.parse(nj.payload).discount,10,'重评沿用原折扣');});
 test('assist: 注入 runAssist 返回回复并记录双方消息；未注入 503 不写 assistant；未登录 401',async()=>{const x=await init();
  // 未登录 401
  assert.equal((await req(x,'assist',{message:'怎么用'})).status,401);

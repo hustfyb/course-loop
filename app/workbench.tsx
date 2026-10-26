@@ -508,6 +508,12 @@ export default function Workbench() {
   const canManageCurrent = admin
     ? !!course
     : teacher && !!course && !!cls && cls.courseId === course.id;
+  const makeupOf = (eid: string) =>
+    (s.makeups || []).find((m: Any) => m.experimentId === eid) || null;
+  const localInput = (ms: number) =>
+    new Date(ms - new Date().getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
   const effDeadline = (c: Any) =>
     c
       ? (c.primaryClassId
@@ -601,7 +607,8 @@ export default function Workbench() {
     <>
       <p className="muted">
         {sub.teamName || sub.members[0]?.name} · 第 {sub.ordinal} 次提交 ·{' '}
-        {fmt(sub.created)} · 快照成员：
+        {fmt(sub.created)}
+        {sub.makeup > 0 ? ` · 补交（扣 ${sub.makeup}%）` : ''} · 快照成员：
         {sub.members.map((m: Any) => m.name).join('、')}
       </p>
       {(sub.status === 'running' || sub.status === 'queued') && (
@@ -644,6 +651,12 @@ export default function Workbench() {
               </div>
             ))}
           </div>
+          {sub.report.makeup?.discount > 0 && (
+            <p className="muted">
+              本次为补交提交 · 已按 {sub.report.makeup.discount}%
+              扣分（各项分数与总分均已折算）
+            </p>
+          )}
           {sub.report.limitations?.length > 0 && (
             <div className="questions">
               <strong>尚未核验</strong>
@@ -1970,6 +1983,11 @@ export default function Workbench() {
                         <div className="lab-top">
                           <span className="experiment-number">0{i + 1}</span>
                           <span className="tag">{e.week}</span>
+                          {makeupOf(e.id) && (
+                            <span className="tag">
+                              补交 −{makeupOf(e.id).discount}%
+                            </span>
+                          )}
                           <span className="tag blue">
                             {e.grading === 'individual'
                               ? '个人判分'
@@ -2030,12 +2048,35 @@ export default function Workbench() {
                                 : '小组判分'}
                           </span>
                         </div>
-                        <button
-                          aria-label="收起实验详情"
-                          onClick={() => setDetail(null)}
-                        >
-                          <X size={19} />
-                        </button>
+                        <div className="button-row">
+                          {canManageCurrent && detail.grading !== 'none' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                const m = makeupOf(detail.id);
+                                open('makeup', {
+                                  courseId: course?.id,
+                                  experimentId: detail.id,
+                                  title: detail.title,
+                                });
+                                setForm({
+                                  start: m ? localInput(m.start) : '',
+                                  end: m ? localInput(m.end) : '',
+                                  discount: m ? String(m.discount) : '',
+                                });
+                              }}
+                            >
+                              补交设置
+                            </Button>
+                          )}
+                          <button
+                            aria-label="收起实验详情"
+                            onClick={() => setDetail(null)}
+                          >
+                            <X size={19} />
+                          </button>
+                        </div>
                       </div>
                       <div className="detail-columns">
                         <div>
@@ -2092,6 +2133,13 @@ export default function Workbench() {
                           {effDeadline(cls) && (
                             <p className="muted">
                               提交截止：{deadlineLabel(cls)}
+                            </p>
+                          )}
+                          {makeupOf(detail.id) && (
+                            <p className="muted">
+                              补交窗口：{fmt(makeupOf(detail.id).start)} –{' '}
+                              {fmt(makeupOf(detail.id).end)} ·
+                              分数按原价扣除 {makeupOf(detail.id).discount}%
                             </p>
                           )}
                           {!team && !detailIndividual ? (
@@ -2172,6 +2220,11 @@ export default function Workbench() {
                                       <span className="tag">
                                         第 {sub.ordinal} 次
                                       </span>
+                                      {sub.makeup > 0 && (
+                                        <span className="tag">
+                                          补交 −{sub.makeup}%
+                                        </span>
+                                      )}
                                       <Status value={sub.status} />
                                       {sub.status === 'complete' &&
                                       sub.report ? (
@@ -3207,6 +3260,7 @@ export default function Workbench() {
                     newCourse: '新建课程',
                     delCourse: '删除课程',
                     transfer: '移交课程负责人',
+                    makeup: '实验补交设置',
                     delFile: '删除课程素材',
                     newClass: '开设课堂',
                     join: '加入课堂',
@@ -3694,6 +3748,85 @@ export default function Workbench() {
               >
                 确认移交
               </Button>
+            </>
+          )}
+          {modal?.type === 'makeup' && (
+            <>
+              <p>
+                为 <strong>{modal.title}</strong>{' '}
+                设置补交窗口：课堂截止时间过后，学生仍可在窗口内提交，成绩按折扣扣分。
+              </p>
+              <label>
+                补交开始时间
+                <Input
+                  type="datetime-local"
+                  value={form.start || ''}
+                  onChange={(e) => field('start', e.target.value)}
+                />
+              </label>
+              <label>
+                补交结束时间
+                <Input
+                  type="datetime-local"
+                  value={form.end || ''}
+                  onChange={(e) => field('end', e.target.value)}
+                />
+              </label>
+              <label>
+                扣分比例（%，1–90）
+                <Input
+                  type="number"
+                  min={1}
+                  max={90}
+                  step={1}
+                  placeholder="例如 10 表示扣 10%"
+                  value={form.discount || ''}
+                  onChange={(e) => field('discount', e.target.value)}
+                />
+              </label>
+              <div className="button-row">
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    act(async () => {
+                      await call('makeup-set', {
+                        courseId: modal.courseId,
+                        experimentId: modal.experimentId,
+                        start: form.start
+                          ? new Date(form.start).toISOString()
+                          : undefined,
+                        end: form.end
+                          ? new Date(form.end).toISOString()
+                          : undefined,
+                        discount:
+                          form.discount === ''
+                            ? undefined
+                            : Number(form.discount),
+                      });
+                      setModal(null);
+                      setNotice('补交设置已保存');
+                    })
+                  }
+                >
+                  保存补交窗口
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    act(async () => {
+                      await call('makeup-set', {
+                        courseId: modal.courseId,
+                        experimentId: modal.experimentId,
+                      });
+                      setModal(null);
+                      setNotice('已清除该实验的补交设置');
+                    })
+                  }
+                >
+                  清除设置
+                </Button>
+              </div>
             </>
           )}
           {modal?.type === 'delFile' && (
