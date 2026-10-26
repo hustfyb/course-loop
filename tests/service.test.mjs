@@ -121,40 +121,37 @@ test('dev hosts: DEV_HOSTS 名单内的公网主机名走本地登录（固定�
  const o=await api(new Request('http://other.example.com/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'oh@example.com'})}),envD);assert.equal(o.status,200);assert.match((await o.json()).message,/邮件投递队列/);
  assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM jobs WHERE kind='email'").get().n,1,'名单外仍走真实邮件');
  const g=await api(new Request('http://demo.example.com/api/state'),envD);assert.equal((await g.json()).local,true,'Dev 域名 state 标记 local');});
-test('makeup submission: 过截止时间需补交窗口放行，评分按折扣扣减，按时提交不打折，重评沿用提交时折扣',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+test('makeup submission: 课堂级补交窗口放行超时提交，评分按折扣扣减',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
  assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
  const s1=await login(x,'mk1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'补交组'},s1.cookie)).data.id;const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
  x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,kid);
  assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'无补交配置时拒绝');
- // 补交配置仅课程负责人/管理员可设
  const iso=(ms)=>new Date(ms).toISOString();
- // 课堂老师可设本课堂补交；非本课堂老师被拒
- assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',classId:kid,start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:5},t.cookie)).status,200,'课堂老师可设本课堂补交');
- assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:10},t.cookie)).status,403,'课堂老师不能设全课程统一');
- assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:95},a.cookie)).status,400,'折扣超范围');
- assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()+3600000),end:iso(Date.now()+1000),discount:10},a.cookie)).status,400,'起止倒挂');
- x.sqlite.prepare("DELETE FROM makeups WHERE courseId=? AND classId=?").run(cid,kid);
- assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:10},a.cookie)).status,200,'窗口未开');
+ const t2=await login(x,'teach2@example.com','teacher');
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:5},t2.cookie)).status,403,'非本课堂教师被拒');
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:5},s1.cookie)).status,403,'学生被拒');
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:95},t.cookie)).status,400,'折扣超范围');
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()+3600000),end:iso(Date.now()+1000),discount:10},t.cookie)).status,400,'起止倒挂');
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:10},t.cookie)).status,200,'课堂教师可设本课堂补交');
  assert.match((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).data.error,/尚未开始/);
- assert.ok((await req(x,'state',undefined,s1.cookie)).data.makeups.some(m=>m.experimentId==='exp-1'&&m.discount===10),'makeups 随学生快照下发');
- // 窗口开放 → 放行并打标记，任务载荷带折扣
- assert.equal(x.sqlite.prepare("UPDATE makeups SET start=? WHERE courseId=? AND classId=''").run(Date.now()-1000,cid).changes,1,'更新全课程窗口');
- x.sqlite.prepare("DELETE FROM makeups WHERE courseId=? AND classId=?").run(cid,kid);
+ const st=(await req(x,'state',undefined,s1.cookie)).data;
+ assert.equal(st.makeups.length,1,'学生快照下发课堂级补交');assert.equal(st.makeups[0].discount,10);assert.equal(st.makeups[0].classId,kid);
+ x.sqlite.prepare('UPDATE makeups SET start=? WHERE classId=?').run(Date.now()-1000,kid);
  const sub=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(sub.status,200);assert.equal(sub.data.makeup,true);assert.equal(sub.data.discount,10);
  assert.equal(x.sqlite.prepare('SELECT makeup FROM submissions WHERE id=?').get(sub.data.id).makeup,10,'makeup 列存折扣百分数');
  const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
  const job=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(job.payload.discount,10);
- const mkRes=(payload)=>({items:payload.experiment.rubric.map(r=>({id:r.id,score:r.max,reason:'全部满足',evidence:['a.md:1']})),suggestions:[],total:payload.experiment.rubric.reduce((n,r)=>n+r.max,0)});
+ const mkRes=(pl)=>({items:pl.experiment.rubric.map(r=>({id:r.id,score:r.max,reason:'全部满足',evidence:['a.md:1']})),suggestions:[],total:pl.experiment.rubric.reduce((n,r)=>n+r.max,0)});
  assert.equal((await req(x,'connector/finish/'+job.id,{result:mkRes(job.payload)},'',{...headers,'x-job-lease':job.lease})).status,200);
  const rep=JSON.parse(x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(sub.data.id).report);
  assert.equal(rep.total,90,'满分补交扣 10% → 90');assert.ok(rep.makeup&&rep.makeup.discount===10);assert.equal(rep.items.find(i=>i.id==='r1').score,54,'单项同步打折 60→54');
- // 按时提交（截止改到未来）不打折
  x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()+86400000,kid);
  const sub2=await req(x,'submit',{experimentId:'exp-2',fileIds:[fid]},s1.cookie);assert.equal(sub2.status,200);assert.equal(sub2.data.makeup,false);
  const job2=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(job2.payload.submissionId,sub2.data.id);assert.ok(!job2.payload.discount);
  assert.equal((await req(x,'connector/finish/'+job2.id,{result:mkRes(job2.payload)},'',{...headers,'x-job-lease':job2.lease})).status,200);
  assert.equal(JSON.parse(x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(sub2.data.id).report).total,100,'按时提交不折扣');
- // 重评：即使补交配置已删除，仍沿用提交时记录的折扣
+ assert.equal((await req(x,'makeup-set',{classId:kid},t.cookie)).status,200);
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM makeups WHERE classId=?').get(kid).n,0,'清除后无残留');
  x.sqlite.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(job.id);
  assert.equal((await req(x,'grade-retry',{submissionId:sub.data.id},t.cookie)).status,200);
  const nj=x.sqlite.prepare('SELECT payload FROM jobs WHERE id=(SELECT jobId FROM submissions WHERE id=?)').get(sub.data.id);assert.equal(JSON.parse(nj.payload).discount,10,'重评沿用原折扣');});

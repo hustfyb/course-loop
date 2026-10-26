@@ -528,13 +528,10 @@ export default function Workbench() {
     : teacher && !!cls && !!classCourse && cls.courseId === classCourse.id;
   const canManageMakeup = admin || (teacher && !!cls && !!classCourse);
   const canManageCurrent = canManageCourse;
-  // 课堂视角（s.makeups）优先；编排视角（教师管理课程且非课堂视图）用 studioMakeups
-  const makeupList: Any[] =
-    admin || canManageCourse
-      ? s.studioMakeups || s.makeups || []
-      : s.makeups || [];
-  const makeupOf = (eid: string) =>
-    makeupList.find((m: Any) => m.experimentId === eid) || null;
+  // 课堂级补交：本课堂一条配置，对所有实验生效
+  const classMakeup: Any = (s.makeups || [])[0] || null;
+  const makeupList: Any[] = classMakeup ? [classMakeup] : [];
+  const makeupOf = (_eid: string) => classMakeup;
   const localInput = (ms: number) =>
     new Date(ms - new Date().getTimezoneOffset() * 60000)
       .toISOString()
@@ -2081,51 +2078,12 @@ export default function Workbench() {
                                 : '小组判分'}
                           </span>
                         </div>
-                        <div className="button-row">
-                          {canManageMakeup && detail.grading !== 'none' && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                // 管理员设全课程统一；课程负责人若有课堂则本课堂优先，否则全课程；普通老师只能本课堂
-                                const scopeClassId = admin
-                                  ? ''
-                                  : classCourse?.managed && !cls
-                                    ? ''
-                                    : cls
-                                      ? cls.id
-                                      : '';
-                                const m = makeupList.find(
-                                  (x: Any) =>
-                                    x.experimentId === detail.id &&
-                                    (x.classId || '') === scopeClassId,
-                                );
-                                open('makeup', {
-                                  courseId:
-                                    classCourse?.id || course?.id,
-                                  experimentId: detail.id,
-                                  title: detail.title,
-                                  classId: scopeClassId,
-                                  classLabel:
-                                    scopeClassId && cls ? cls.name : '',
-                                });
-                                setForm({
-                                  start: m ? localInput(m.start) : '',
-                                  end: m ? localInput(m.end) : '',
-                                  discount: m ? String(m.discount) : '',
-                                });
-                              }}
-                            >
-                              补交设置
-                            </Button>
-                          )}
-                          <button
-                            aria-label="收起实验详情"
-                            onClick={() => setDetail(null)}
-                          >
-                            <X size={19} />
-                          </button>
-                        </div>
+                        <button
+                          aria-label="收起实验详情"
+                          onClick={() => setDetail(null)}
+                        >
+                          <X size={19} />
+                        </button>
                       </div>
                       <div className="detail-columns">
                         <div>
@@ -2184,11 +2142,11 @@ export default function Workbench() {
                               提交截止：{deadlineLabel(cls)}
                             </p>
                           )}
-                          {makeupOf(detail.id) && (
+                          {classMakeup && (
                             <p className="muted">
-                              补交窗口：{fmt(makeupOf(detail.id).start)} –{' '}
-                              {fmt(makeupOf(detail.id).end)} ·
-                              分数按原价扣除 {makeupOf(detail.id).discount}%
+                              补交窗口（本课堂）：{fmt(classMakeup.start)} –{' '}
+                              {fmt(classMakeup.end)} · 截止后补交的提交按原分扣除{' '}
+                              {classMakeup.discount}%
                             </p>
                           )}
                           {!team && !detailIndividual ? (
@@ -3253,6 +3211,36 @@ export default function Workbench() {
                       自动发布：
                       {cls.autoPublish ? '已启用' : '关闭，待校准后启用'}
                     </p>
+                    <p>
+                      补交：
+                      {classMakeup ? (
+                        <>
+                          {fmt(classMakeup.start)} – {fmt(classMakeup.end)} ·
+                          扣 {classMakeup.discount}%
+                        </>
+                      ) : (
+                        '未设置'
+                      )}
+                    </p>
+                    <div className="button-row">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setForm({
+                            start: classMakeup
+                              ? localInput(classMakeup.start)
+                              : '',
+                            end: classMakeup ? localInput(classMakeup.end) : '',
+                            discount: classMakeup
+                              ? String(classMakeup.discount)
+                              : '',
+                          });
+                          open('makeup');
+                        }}
+                      >
+                        补交设置
+                      </Button>
+                    </div>
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -3309,7 +3297,7 @@ export default function Workbench() {
                     newCourse: '新建课程',
                     delCourse: '删除课程',
                     transfer: '移交课程负责人',
-                    makeup: '实验补交设置',
+                    makeup: '课堂补交设置',
                     delFile: '删除课程素材',
                     newClass: '开设课堂',
                     join: '加入课堂',
@@ -3802,19 +3790,12 @@ export default function Workbench() {
           {modal?.type === 'makeup' && (
             <>
               <p>
-                为 <strong>{modal.title}</strong>{' '}
-                设置补交窗口：课堂截止时间过后，学生仍可在窗口内提交，成绩按折扣扣分。
+                为本课堂「<strong>{cls?.name || '当前课堂'}</strong>
+                」设置补交窗口：课堂截止时间过后，学生仍可在窗口内提交本课堂的任意实验，成绩按折扣扣分。
               </p>
               <p className="muted">
-                生效范围：
-                {modal.classId ? (
-                  <>
-                    本课堂「<strong>{modal.classLabel || '当前课堂'}</strong>
-                    」，只影响你课堂里的学生。
-                  </>
-                ) : (
-                  <>全课程统一（本课程下尚未单独设置补交的课堂都会沿用）。</>
-                )}
+                补交设置按课堂生效，只影响本课堂学生；每个实验仍保留最多 3
+                次提交，取最高分计成绩。
               </p>
               <label>
                 补交开始时间
@@ -3846,13 +3827,11 @@ export default function Workbench() {
               </label>
               <div className="button-row">
                 <Button
-                  disabled={busy}
+                  disabled={busy || !cls}
                   onClick={() =>
                     act(async () => {
                       await call('makeup-set', {
-                        courseId: modal.courseId,
-                        experimentId: modal.experimentId,
-                        classId: modal.classId || '',
+                        classId: s.selected,
                         start: form.start
                           ? new Date(form.start).toISOString()
                           : undefined,
@@ -3869,20 +3848,16 @@ export default function Workbench() {
                     })
                   }
                 >
-                  保存补交窗口
+                  保存补交设置
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={busy}
+                  disabled={busy || !cls}
                   onClick={() =>
                     act(async () => {
-                      await call('makeup-set', {
-                        courseId: modal.courseId,
-                        experimentId: modal.experimentId,
-                        classId: modal.classId || '',
-                      });
+                      await call('makeup-set', { classId: s.selected });
                       setModal(null);
-                      setNotice('已清除该实验的补交设置');
+                      setNotice('已清除本课堂的补交设置');
                     })
                   }
                 >
