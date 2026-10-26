@@ -57,6 +57,13 @@
       "when": 1792598400000,
       "tag": "0007_makeup_window",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792684800000,
+      "tag": "0008_makeup_per_class",
+      "breakpoints": true
     }
   ]
 }

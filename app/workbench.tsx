@@ -495,23 +495,43 @@ export default function Workbench() {
     // 依赖 s：跟随 7 秒轮询同步刷新当前页
   }, [admin, view, logPage, s]);
   const managedCourses = (s.courses || []).filter((c: Any) => c.managed);
-  const course = admin
+  const cls = s.classes?.find((c: Any) => c.id === s.selected);
+  // 课堂所属课程：来自当前课堂（教师日常教学视角）
+  const classCourse: Any = cls
+    ? {
+        id: cls.courseId,
+        title: cls.courseTitle,
+        term: cls.term,
+        revision: undefined,
+        managed: managedCourses.some((c: Any) => c.id === cls.courseId),
+      }
+    : null;
+  // 编排课程：studio/overview 里选中并管理的课程
+  const studioCourse: Any = admin
     ? s.courses?.find((c: Any) => c.id === s.selected)
     : teacher
       ? managedCourses.find(
           (c: Any) => c.id === (courseSel || s.selectedCourse),
         )
       : s.course;
+  // 课程视图语义：studio/overview 用编排课程，其余用课堂所属课程
+  const courseUseStudio =
+    admin || (teacher && (view === 'studio' || view === 'overview'));
+  const course: Any = courseUseStudio
+    ? studioCourse
+    : classCourse || studioCourse;
   const chooseCourse = (id: string) =>
     admin ? setSelected(id) : setCourseSel(id);
-  const cls = s.classes?.find((c: Any) => c.id === s.selected);
-  const canManageCurrent = admin
+  // 管理实验内容（发布/编排/素材）只看课程负责人；补交设置课堂老师也可
+  const canManageCourse = admin
     ? !!course
-    : teacher && !!course && !!cls && cls.courseId === course.id;
-  const makeupList: Any[] = admin
-    ? s.makeups || []
-    : canManageCurrent
-      ? s.studioMakeups || []
+    : teacher && !!cls && !!classCourse && cls.courseId === classCourse.id;
+  const canManageMakeup = admin || (teacher && !!cls && !!classCourse);
+  const canManageCurrent = canManageCourse;
+  // 课堂视角（s.makeups）优先；编排视角（教师管理课程且非课堂视图）用 studioMakeups
+  const makeupList: Any[] =
+    admin || canManageCourse
+      ? s.studioMakeups || s.makeups || []
       : s.makeups || [];
   const makeupOf = (eid: string) =>
     makeupList.find((m: Any) => m.experimentId === eid) || null;
@@ -1233,7 +1253,10 @@ export default function Workbench() {
           <div className="page-heading">
             <div className="eyebrow">
               {heading[0]}
-              <span>{course?.term || cls?.term || '2026 / AUTUMN'}</span>
+              <span>
+                {(admin ? course?.term : cls?.term || course?.term) ||
+                  '2026 / AUTUMN'}
+              </span>
             </div>
             <div className="heading-row">
               <div>
@@ -2059,16 +2082,32 @@ export default function Workbench() {
                           </span>
                         </div>
                         <div className="button-row">
-                          {canManageCurrent && detail.grading !== 'none' && (
+                          {canManageMakeup && detail.grading !== 'none' && (
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                const m = makeupOf(detail.id);
+                                // 管理员设全课程统一；课程负责人若有课堂则本课堂优先，否则全课程；普通老师只能本课堂
+                                const scopeClassId = admin
+                                  ? ''
+                                  : classCourse?.managed && !cls
+                                    ? ''
+                                    : cls
+                                      ? cls.id
+                                      : '';
+                                const m = makeupList.find(
+                                  (x: Any) =>
+                                    x.experimentId === detail.id &&
+                                    (x.classId || '') === scopeClassId,
+                                );
                                 open('makeup', {
-                                  courseId: course?.id,
+                                  courseId:
+                                    classCourse?.id || course?.id,
                                   experimentId: detail.id,
                                   title: detail.title,
+                                  classId: scopeClassId,
+                                  classLabel:
+                                    scopeClassId && cls ? cls.name : '',
                                 });
                                 setForm({
                                   start: m ? localInput(m.start) : '',
@@ -3766,6 +3805,17 @@ export default function Workbench() {
                 为 <strong>{modal.title}</strong>{' '}
                 设置补交窗口：课堂截止时间过后，学生仍可在窗口内提交，成绩按折扣扣分。
               </p>
+              <p className="muted">
+                生效范围：
+                {modal.classId ? (
+                  <>
+                    本课堂「<strong>{modal.classLabel || '当前课堂'}</strong>
+                    」，只影响你课堂里的学生。
+                  </>
+                ) : (
+                  <>全课程统一（本课程下尚未单独设置补交的课堂都会沿用）。</>
+                )}
+              </p>
               <label>
                 补交开始时间
                 <Input
@@ -3802,6 +3852,7 @@ export default function Workbench() {
                       await call('makeup-set', {
                         courseId: modal.courseId,
                         experimentId: modal.experimentId,
+                        classId: modal.classId || '',
                         start: form.start
                           ? new Date(form.start).toISOString()
                           : undefined,
@@ -3828,6 +3879,7 @@ export default function Workbench() {
                       await call('makeup-set', {
                         courseId: modal.courseId,
                         experimentId: modal.experimentId,
+                        classId: modal.classId || '',
                       });
                       setModal(null);
                       setNotice('已清除该实验的补交设置');

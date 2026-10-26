@@ -96,7 +96,7 @@ test('capacity, unregistered invitation visibility, cancellation and unresolved 
  const j=(await req(x,'chat',{courseId:cid,message:'改任务'},a.cookie)).data.jobId;assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,409);
  assert.equal((await req(x,'job-action',{id:j,action:'cancel'},t.cookie)).status,403);await req(x,'job-action',{id:j,action:'cancel'},a.cookie);
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses').get().draft);d.questions=['MCP 是否必做？'];x.sqlite.prepare('UPDATE courses SET draft=?').run(JSON.stringify(d));assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,400);});
-test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,8);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
+test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,9);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
  const t=Date.now();sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u1','t@x.com','教师','','teacher',t);sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u2','s@x.com','学生','001','student',t);
  sqlite.prepare("INSERT INTO courses(id,owner,title,term,draft,joinCode,maxSize,deadline,maxFormal,autoPublish,created) VALUES('c1','u1','课','学期','{}','CODE123456',5,NULL,3,1,?)").run(t);
  sqlite.prepare("INSERT INTO enrollments VALUES('c1','u2')").run();sqlite.prepare("INSERT INTO teams VALUES('tm1','c1','u2','组',0,?)").run(t);sqlite.prepare("INSERT INTO members VALUES('c1','tm1','u2',1)").run();sqlite.prepare("INSERT INTO invites VALUES('iv1','tm1','n@x.com','pending',?)").run(t);
@@ -128,14 +128,18 @@ test('makeup submission: 过截止时间需补交窗口放行，评分按折扣�
  assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'无补交配置时拒绝');
  // 补交配置仅课程负责人/管理员可设
  const iso=(ms)=>new Date(ms).toISOString();
- assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:10},t.cookie)).status,403);
+ // 课堂老师可设本课堂补交；非本课堂老师被拒
+ assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',classId:kid,start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:5},t.cookie)).status,200,'课堂老师可设本课堂补交');
+ assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:10},t.cookie)).status,403,'课堂老师不能设全课程统一');
  assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()-1000),end:iso(Date.now()+3600000),discount:95},a.cookie)).status,400,'折扣超范围');
  assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()+3600000),end:iso(Date.now()+1000),discount:10},a.cookie)).status,400,'起止倒挂');
+ x.sqlite.prepare("DELETE FROM makeups WHERE courseId=? AND classId=?").run(cid,kid);
  assert.equal((await req(x,'makeup-set',{courseId:cid,experimentId:'exp-1',start:iso(Date.now()+7200000),end:iso(Date.now()+10800000),discount:10},a.cookie)).status,200,'窗口未开');
  assert.match((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).data.error,/尚未开始/);
  assert.ok((await req(x,'state',undefined,s1.cookie)).data.makeups.some(m=>m.experimentId==='exp-1'&&m.discount===10),'makeups 随学生快照下发');
  // 窗口开放 → 放行并打标记，任务载荷带折扣
- assert.equal(x.sqlite.prepare('UPDATE makeups SET start=? WHERE courseId=?').run(Date.now()-1000,cid).changes,1);
+ assert.equal(x.sqlite.prepare("UPDATE makeups SET start=? WHERE courseId=? AND classId=''").run(Date.now()-1000,cid).changes,1,'更新全课程窗口');
+ x.sqlite.prepare("DELETE FROM makeups WHERE courseId=? AND classId=?").run(cid,kid);
  const sub=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(sub.status,200);assert.equal(sub.data.makeup,true);assert.equal(sub.data.discount,10);
  assert.equal(x.sqlite.prepare('SELECT makeup FROM submissions WHERE id=?').get(sub.data.id).makeup,10,'makeup 列存折扣百分数');
  const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
