@@ -155,6 +155,30 @@ test('makeup submission: 课堂级补交窗口放行超时提交，评分按折�
  x.sqlite.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(job.id);
  assert.equal((await req(x,'grade-retry',{submissionId:sub.data.id},t.cookie)).status,200);
  const nj=x.sqlite.prepare('SELECT payload FROM jobs WHERE id=(SELECT jobId FROM submissions WHERE id=?)').get(sub.data.id);assert.equal(JSON.parse(nj.payload).discount,10,'重评沿用原折扣');});
+test('makeup inherits from primary class like the deadline',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const k2=(await req(x,'classes',{courseId:cid,name:'二课堂'},t.cookie)).data;
+ // 主课堂截止已过；补交窗口只设在主课堂
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,kid);
+ assert.equal((await req(x,'course-primary',{courseId:cid,classId:kid},a.cookie)).status,200);
+ const iso=(ms)=>new Date(ms).toISOString();
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()-60000),end:iso(Date.now()+3600000),discount:10},t.cookie)).status,200);
+ // 非主课堂学生：截止继承主课堂，补交窗口也应继承
+ const s1=await login(x,'inh1@example.com');await req(x,'join',{code:k2.joinCode},s1.cookie);
+ const tid=(await req(x,'teams',{classId:k2.id,name:'继承组'},s1.cookie)).data.id;
+ const f=new FormData();f.set('classId',k2.id);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ const sub=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ assert.equal(sub.status,200,'非主课堂学生应能用主课堂的补交窗口');assert.equal(sub.data.makeup,true);assert.equal(sub.data.discount,10);
+ // 学生快照下发主课堂的补交配置（前端据此显示"主课堂统一"）
+ const st=(await req(x,'state',undefined,s1.cookie)).data;
+ assert.equal(st.makeups.length,1);assert.equal(st.makeups[0].classId,kid,'下发的是主课堂配置');
+ // 本课堂单独设置优先于主课堂
+ assert.equal((await req(x,'makeup-set',{classId:k2.id,start:iso(Date.now()-60000),end:iso(Date.now()+3600000),discount:20},t.cookie)).status,200);
+ const sub2=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(sub2.status,200);assert.equal(sub2.data.discount,20,'本课堂设置优先');
+ // 清除本课堂设置后回到主课堂统一
+ assert.equal((await req(x,'makeup-set',{classId:k2.id},t.cookie)).status,200);
+ const st2=(await req(x,'state',undefined,s1.cookie)).data;assert.equal(st2.makeups[0].classId,kid);
+});
 test('makeup counts toward the 3-attempt cap',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
  assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
  const s1=await login(x,'cap1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'上限组'},s1.cookie)).data.id;

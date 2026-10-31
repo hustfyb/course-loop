@@ -528,8 +528,10 @@ export default function Workbench() {
     : teacher && !!cls && !!classCourse && cls.courseId === classCourse.id;
   const canManageMakeup = admin || (teacher && !!cls && !!classCourse);
   const canManageCurrent = canManageCourse;
-  // 课堂级补交：本课堂一条配置，对所有实验生效
+  // 课堂级补交：本课堂优先，否则沿用主课堂（与截止时间继承一致）
   const classMakeup: Any = (s.makeups || [])[0] || null;
+  const makeupInherited =
+    !!classMakeup && !!cls && classMakeup.classId !== cls.id;
   const makeupList: Any[] = classMakeup ? [classMakeup] : [];
   const makeupOf = (_eid: string) => classMakeup;
   const localInput = (ms: number) =>
@@ -2144,7 +2146,9 @@ export default function Workbench() {
                           )}
                           {classMakeup && (
                             <p className="muted">
-                              补交窗口（本课堂）：{fmt(classMakeup.start)} –{' '}
+                              补交窗口（
+                              {makeupInherited ? '主课堂统一' : '本课堂'}）：
+                              {fmt(classMakeup.start)} –{' '}
                               {fmt(classMakeup.end)} · 截止后补交的提交按原分扣除{' '}
                               {classMakeup.discount}%
                             </p>
@@ -3223,6 +3227,9 @@ export default function Workbench() {
                               {fmt(classMakeup.start)} –{' '}
                               {fmt(classMakeup.end)} · 扣{' '}
                               {classMakeup.discount}%
+                              {makeupInherited && (
+                                <span className="muted">（主课堂统一）</span>
+                              )}
                             </>
                           ) : (
                             <span className="muted">未设置</span>
@@ -3805,6 +3812,11 @@ export default function Workbench() {
                 补交设置按课堂生效，只影响本课堂学生；补交计入每实验 3
                 次提交的总上限，取最高分计成绩。
               </p>
+              {makeupInherited && (
+                <p className="muted">
+                  当前沿用主课堂统一设置；保存后将为本课堂单独设置，优先于主课堂。
+                </p>
+              )}
               <label>
                 补交开始时间
                 <Input
