@@ -155,6 +155,38 @@ test('makeup submission: 课堂级补交窗口放行超时提交，评分按折�
  x.sqlite.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(job.id);
  assert.equal((await req(x,'grade-retry',{submissionId:sub.data.id},t.cookie)).status,200);
  const nj=x.sqlite.prepare('SELECT payload FROM jobs WHERE id=(SELECT jobId FROM submissions WHERE id=?)').get(sub.data.id);assert.equal(JSON.parse(nj.payload).discount,10,'重评沿用原折扣');});
+test('makeup counts toward the 3-attempt cap',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'cap1@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'上限组'},s1.cookie)).data.id;
+ const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ const iso=(ms)=>new Date(ms).toISOString();
+ // 场景一：截止已过 + 补交窗口开放，三次补交后第四次必须被拒
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,kid);
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()-60000),end:iso(Date.now()+3600000),discount:10},t.cookie)).status,200);
+ for(let i=1;i<=3;i++){const r=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(r.status,200,`第 ${i} 次补交应放行`);assert.equal(r.data.makeup,true);assert.equal(r.data.discount,10);}
+ const r4=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ assert.equal(r4.status,409,'补交后第 4 次必须被拒');assert.match(r4.data.error,/最多提交 3 次/);
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM submissions WHERE classId=?').get(kid).n,3,'库中只应有 3 次提交');
+ assert.ok(x.sqlite.prepare('SELECT * FROM submissions WHERE classId=?').all(kid).every(s=>s.makeup===10),'三次均为补交');
+});
+test('mixed normal + makeup still caps at 3',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'cap2@example.com');await req(x,'join',{code},s1.cookie);const tid=(await req(x,'teams',{classId:kid,name:'混合组'},s1.cookie)).data.id;
+ const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ const iso=(ms)=>new Date(ms).toISOString();
+ // 截止前正常提交两次
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()+86400000,kid);
+ for(let i=1;i<=2;i++){const r=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(r.status,200);assert.equal(r.data.makeup,false);}
+ // 截止后补交一次（第 3 次）
+ x.sqlite.prepare('UPDATE classes SET deadline=? WHERE id=?').run(Date.now()-3600000,kid);
+ assert.equal((await req(x,'makeup-set',{classId:kid,start:iso(Date.now()-60000),end:iso(Date.now()+3600000),discount:15},t.cookie)).status,200);
+ const r3=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);
+ assert.equal(r3.status,200);assert.equal(r3.data.makeup,true);assert.equal(r3.data.discount,15);
+ // 第 4 次拒绝
+ const r4=await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie);assert.equal(r4.status,409);
+ const rows=x.sqlite.prepare('SELECT ordinal,makeup FROM submissions WHERE classId=? ORDER BY ordinal').all(kid);
+ assert.equal(rows.length,3);assert.deepEqual(rows.map(r=>r.makeup),[0,0,15],'前两次正常、第三次补交');
+});
 test('assist: 注入 runAssist 返回回复并记录双方消息；未注入 503 不写 assistant；未登录 401',async()=>{const x=await init();
  // 未登录 401
  assert.equal((await req(x,'assist',{message:'怎么用'})).status,401);

@@ -2204,10 +2204,10 @@ export default function Workbench() {
                                 </Button>
                                 <span className="muted">
                                   {formalUsed >= 3
-                                    ? '提交次数已用完（3 次），取最高分计成绩。'
+                                    ? '提交次数已用完（3 次，含补交），取最高分计成绩。'
                                     : detailIndividual
-                                      ? `以你本人名义提交，每个实验最多 3 次（已用 ${formalUsed} 次），每次都会评分，取最高分计成绩。`
-                                      : `由组长提交，每个实验最多 3 次（已用 ${formalUsed} 次），每次都会评分，取最高分计成绩。`}
+                                      ? `以你本人名义提交，每个实验最多 3 次（已用 ${formalUsed} 次，补交也计入），每次都会评分，取最高分计成绩。`
+                                      : `由组长提交，每个实验最多 3 次（已用 ${formalUsed} 次，补交也计入），每次都会评分，取最高分计成绩。`}
                                 </span>
                               </div>
                               <div className="submit-status">
@@ -3202,7 +3202,7 @@ export default function Workbench() {
                         <dt>小组规模</dt>
                         <dd>
                           最多 {cls.maxSize} 人 · 每实验最多提交 3
-                          次，取最高分计成绩
+                          次（补交计入），取最高分计成绩
                         </dd>
                       </div>
                       <div>
@@ -3802,8 +3802,8 @@ export default function Workbench() {
                 」设置补交窗口：课堂截止时间过后，学生仍可在窗口内提交本课堂的任意实验，成绩按折扣扣分。
               </p>
               <p className="muted">
-                补交设置按课堂生效，只影响本课堂学生；每个实验仍保留最多 3
-                次提交，取最高分计成绩。
+                补交设置按课堂生效，只影响本课堂学生；补交计入每实验 3
+                次提交的总上限，取最高分计成绩。
               </p>
               <label>
                 补交开始时间
