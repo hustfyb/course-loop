@@ -455,6 +455,15 @@ test('class roster export: CSV 含团队/成员/仓库/各实验提交次数与�
  assert.equal(cells[7],'https://github.com/demo/roster');assert.equal(cells[8],'1');
  assert.equal(cells[9],'1','exp-1 提交次数');assert.equal(cells[10],'80','exp-1 最高分');
  assert.equal(cells[17],'1','已提交实验数');assert.equal(cells[18],'20.0','总评=80/4');
+ // 按小组导出：成员合并、不含成绩
+ const rt=await api(new Request('http://localhost/api/class-roster?scope=team&classId='+kid,{headers:{cookie:t.cookie}}),x.env);
+ const tbuf=Buffer.from(await rt.arrayBuffer());assert.equal(rt.status,200);
+ const ttext=tbuf.slice(3).toString('utf8');
+ const trows=ttext.split('\r\n').filter(Boolean);
+ assert.equal(trows[0],'课堂,课程,团队,人数,组长,成员,GitHub 仓库,创建时间');
+ assert.ok(!ttext.includes('最高分'),'小组名单不应含成绩列');
+ const trow=trows.find(l=>l.includes('导出组'));assert.ok(trow,'应有该小组一行');
+ assert.ok(trow.includes('roster1（2026001）'),'成员应合并列出');assert.ok(trow.includes('https://github.com/demo/roster'));
  // 学生不可导出；管理员可
  const r2=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:s1.cookie}}),x.env);assert.equal(r2.status,403);
  const r3=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:a.cookie}}),x.env);assert.equal(r3.status,200);

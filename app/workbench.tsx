@@ -2311,12 +2311,23 @@ export default function Workbench() {
                             variant="outline"
                             onClick={() => {
                               window.location.href =
-                                '/api/class-roster?classId=' +
+                                '/api/class-roster?scope=member&classId=' +
                                 encodeURIComponent(s.selected);
                             }}
                           >
                             <Download size={15} />
-                            导出名单
+                            导出个人名单
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              window.location.href =
+                                '/api/class-roster?scope=team&classId=' +
+                                encodeURIComponent(s.selected);
+                            }}
+                          >
+                            <Download size={15} />
+                            导出小组名单
                           </Button>
                         </span>
                       )
