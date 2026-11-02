@@ -2299,13 +2299,26 @@ export default function Workbench() {
                   </span>
                   {teacher
                     ? cls?.joinCode && (
-                        <Button
-                          variant="outline"
-                          onClick={() => cp(cls.joinCode)}
-                        >
-                          <Copy size={15} />
-                          课堂邀请码：{cls.joinCode}
-                        </Button>
+                        <span className="button-row">
+                          <Button
+                            variant="outline"
+                            onClick={() => cp(cls.joinCode)}
+                          >
+                            <Copy size={15} />
+                            课堂邀请码：{cls.joinCode}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              window.location.href =
+                                '/api/class-roster?classId=' +
+                                encodeURIComponent(s.selected);
+                            }}
+                          >
+                            <Download size={15} />
+                            导出名单
+                          </Button>
+                        </span>
                       )
                     : !team && (
                         <Button onClick={() => open('createTeam')}>

@@ -427,6 +427,38 @@ test('primary class: 管理员设置主课堂，其截止时间对本课程全�
  assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,400,'清除主课堂后按本课堂过期截止时间拦截');
  // 管理员快照标记主课堂
  const as=(await req(x,'state',undefined,a.cookie)).data;assert.equal(as.primaryClassId,null);});
+test('class roster export: CSV 含团队/成员/仓库/各实验提交次数与最高分，仅教师与管理员',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'roster1@example.com');await req(x,'join',{code},s1.cookie);
+ const tid=(await req(x,'teams',{classId:kid,name:'导出组,测试'},s1.cookie)).data.id;
+ assert.equal((await req(x,'team-repo',{teamId:tid,repo:'https://github.com/demo/roster'},s1.cookie)).status,200);
+ const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['a'],'a.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,200);
+ // 评分：30/20 → 保底映射 48/32 = 80
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const job=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const res={items:job.payload.experiment.rubric.map((r,i)=>({id:r.id,score:i===0?30:20,reason:'ok',evidence:['a.md:1']})),suggestions:[],total:50};
+ assert.equal((await req(x,'connector/finish/'+job.id,{result:res},'',{...headers,'x-job-lease':job.lease})).status,200);
+ // 教师导出
+ const r=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:t.cookie}}),x.env);
+ const buf=Buffer.from(await r.arrayBuffer());
+ assert.equal(r.status,200);assert.match(r.headers.get('content-type')||'',/text\/csv/);
+ assert.deepEqual([...buf.slice(0,3)],[0xEF,0xBB,0xBF],'应带 UTF-8 BOM 以便 Excel 识别中文');
+ const text=buf.slice(3).toString('utf8');
+ const rows=text.split('\r\n').filter(Boolean);
+ assert.match(rows[0],/^课堂,课程,团队,成员姓名,学号,邮箱,角色,GitHub 仓库,团队人数,/);
+ const row=rows.find(l=>l.includes('roster1'));assert.ok(row,'应有该学生一行');
+ const parseCsv=(line)=>{const out=[];let cur='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(q){if(ch==='"'){if(line[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=ch;}else if(ch==='"')q=true;else if(ch===','){out.push(cur);cur='';}else cur+=ch;}out.push(cur);return out;};
+ const cells=parseCsv(row);
+ assert.ok(row.includes('"导出组,测试"'),'含逗号的团队名应加引号');assert.equal(cells[2],'导出组,测试');
+ assert.equal(cells[3],'roster1');assert.equal(cells[4],'2026001');assert.equal(cells[6],'组长');
+ assert.equal(cells[7],'https://github.com/demo/roster');assert.equal(cells[8],'1');
+ assert.equal(cells[9],'1','exp-1 提交次数');assert.equal(cells[10],'80','exp-1 最高分');
+ assert.equal(cells[17],'1','已提交实验数');assert.equal(cells[18],'20.0','总评=80/4');
+ // 学生不可导出；管理员可
+ const r2=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:s1.cookie}}),x.env);assert.equal(r2.status,403);
+ const r3=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:a.cookie}}),x.env);assert.equal(r3.status,200);
+});
 test('pi config: connector_health 的 Pi 配置字段透传到管理员快照',async()=>{const x=await init();const a=await login(x,'admin@example.com');
  x.sqlite.prepare("INSERT INTO settings VALUES('connector_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({acpAt:Date.now(),piMode:'local',piCommand:'C:\bin\pi.cmd',piProvider:'carbit',piModel:'qwen38-nvfp4',piModelLock:'1'}));
  const h=(await req(x,'state',undefined,a.cookie)).data.health;
