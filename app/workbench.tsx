@@ -2322,7 +2322,7 @@ export default function Workbench() {
                             variant="outline"
                             onClick={() => {
                               window.location.href =
-                                '/api/class-roster?scope=team&classId=' +
+                                '/api/class-roster?scope=team&format=xlsx&classId=' +
                                 encodeURIComponent(s.selected);
                             }}
                           >

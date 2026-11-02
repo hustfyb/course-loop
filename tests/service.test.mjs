@@ -5,7 +5,7 @@ import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import ts from 'typescript';
 let api;
-before(async()=>{const dir=path.resolve('test-output/modules');await fs.mkdir(dir,{recursive:true});for(const name of ['domain','seed','service']){let src=await fs.readFile(`lib/${name}.ts`,'utf8');src=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replaceAll("'./seed'","'./seed.mjs'").replaceAll("'./domain'","'./domain.mjs'");await fs.writeFile(path.join(dir,name+'.mjs'),src);}({api}=await import('../test-output/modules/service.mjs'));});
+before(async()=>{const dir=path.resolve('test-output/modules');await fs.mkdir(dir,{recursive:true});for(const name of ['domain','seed','xlsx','service']){let src=await fs.readFile(`lib/${name}.ts`,'utf8');src=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replaceAll("'./seed'","'./seed.mjs'").replaceAll("'./domain'","'./domain.mjs'").replaceAll("'./xlsx'","'./xlsx.mjs'");await fs.writeFile(path.join(dir,name+'.mjs'),src);}({api}=await import('../test-output/modules/service.mjs'));});
 function setup(){const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');const blobs=new Map();const wrapper=(sql,params=[])=>({bind(...v){return wrapper(sql,v)},async first(){return sqlite.prepare(sql).get(...params)||null},async all(){return {results:sqlite.prepare(sql).all(...params)}},async run(){const r=sqlite.prepare(sql).run(...params);return {meta:{changes:r.changes}}}});const env={DB:{prepare:wrapper,async batch(stmts){sqlite.exec('BEGIN');try{const out=[];for(const s of stmts)out.push(await s.run());sqlite.exec('COMMIT');return out;}catch(e){sqlite.exec('ROLLBACK');throw e}}},FILES:{async put(k,b){blobs.set(k,b)},async get(k){return blobs.has(k)?{body:blobs.get(k)}:null},async delete(k){blobs.delete(k)}},LOCAL_DEV:'1',DEV_EMAIL_CODE:'123456',ADMIN_EMAILS:'admin@example.com'};return {sqlite,env,blobs};}
 async function init(){const x=setup();for(const f of (await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort())x.sqlite.exec(await fs.readFile('drizzle/'+f,'utf8'));return x;}
 async function req(x,url,data,cookie='',headers={}){const r=await api(new Request('http://localhost/api/'+url,{method:data===undefined?'GET':'POST',headers:{...(cookie?{cookie}:{}),...(data instanceof FormData?{}:{'Content-Type':'application/json'}),...headers},body:data===undefined?undefined:data instanceof FormData?data:JSON.stringify(data)}),x.env);const type=r.headers.get('content-type');return {status:r.status,data:type?.includes('json')?await r.json():await r.arrayBuffer(),cookie:r.headers.get('set-cookie')?.split(';')[0]};}
@@ -467,6 +467,16 @@ test('class roster export: CSV 含团队/成员/仓库/各实验提交次数与�
  assert.ok(trow.includes('roster1（2026001）'),'成员应合并列出');assert.ok(trow.includes('https://github.com/demo/roster'));
  const trow2=trows.find(l=>l.includes('roster2'));assert.ok(trow2,'未分组学生应单独成行');
  const c2=parseCsv(trow2);assert.equal(c2[2],'（未分组）');assert.equal(c2[3],'1');assert.equal(c2[4],'roster2（2026001）');
+ // 小组 xlsx：两个工作表，成员分列
+ const rx=await api(new Request('http://localhost/api/class-roster?scope=team&format=xlsx&classId='+kid,{headers:{cookie:t.cookie}}),x.env);
+ assert.equal(rx.status,200);assert.match(rx.headers.get('content-type')||'',/spreadsheetml/);
+ const xb=Buffer.from(await rx.arrayBuffer());assert.deepEqual([...xb.slice(0,2)],[0x50,0x4B],'xlsx 应为 zip 容器');
+ const JSZip=(await import('jszip')).default;const zip=await JSZip.loadAsync(xb);
+ const sh1=await zip.file('xl/worksheets/sheet1.xml').async('string');
+ const sh2=await zip.file('xl/worksheets/sheet2.xml').async('string');
+ assert.ok(sh1.includes('成员1'),'小组表应有成员1列');assert.ok(sh1.includes('导出组'),'小组表含团队名');
+ assert.ok(sh1.includes('roster1'),'小组表成员分列展示');
+ assert.ok(sh2.includes('姓名')&&sh2.includes('roster2'),'成员明细表含未分组学生');
  // 学生不可导出；管理员可
  const r2=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:s1.cookie}}),x.env);assert.equal(r2.status,403);
  const r3=await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:a.cookie}}),x.env);assert.equal(r3.status,200);

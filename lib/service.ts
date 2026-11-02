@@ -1,5 +1,6 @@
 import type {Platform} from './platform';
 import {validateDraft,validateAssessment} from './domain';
+import {buildXlsx} from './xlsx';
 const now=()=>Date.now(); const id=()=>crypto.randomUUID(); const json=(x:any)=>JSON.stringify(x);const parse=(x:any,f:any=null)=>{try{return JSON.parse(x)}catch{return f}};
 async function hash(s:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))).map(b=>b.toString(16).padStart(2,'0')).join('');}
 const email=(x:any)=>String(x||'').trim().toLowerCase();
@@ -139,6 +140,18 @@ export async function api(req:Request,env:Platform){
      const rows:any[][]=[['课堂','课程','团队','人数','组长','成员','GitHub 仓库','创建时间']];
      for(const t of teams){const ms=mems.filter((m:any)=>m.teamId===t.id);const leader=ms.find((m:any)=>m.userId===t.leader);rows.push([k.name,c.title,t.name,String(ms.length),leader?leader.name+'（'+leader.studentNo+'）':'',ms.map((m:any)=>m.name+'（'+m.studentNo+'）').join('；'),t.repo||'',day(t.created)]);}
      const inTeam=new Set(mems.map((m:any)=>m.userId));const loose=roster.filter((r:any)=>!inTeam.has(r.id));
+     if(String(url.searchParams.get('format')||'csv')==='xlsx'){
+       const maxN=Math.max(1,...teams.map((t:any)=>mems.filter((m:any)=>m.teamId===t.id).length));
+       const head=['团队','人数','组长',...Array.from({length:maxN},(_,i)=>'成员'+(i+1)),'GitHub 仓库','创建时间'];
+       const s1:any[][]=[head];const s2:any[][]=[['团队','姓名','学号','角色']];
+       for(const t of teams){const ms=mems.filter((m:any)=>m.teamId===t.id);const leader=ms.find((m:any)=>m.userId===t.leader);
+         s1.push([t.name,ms.length,leader?leader.name+'（'+leader.studentNo+'）':'',...Array.from({length:maxN},(_,i)=>ms[i]?ms[i].name+'（'+ms[i].studentNo+'）':''),t.repo||'',day(t.created)]);
+         for(const m of ms)s2.push([t.name,m.name,m.studentNo,m.userId===t.leader?'组长':'成员']);}
+       for(const r of loose){s1.push(['（未分组）',1,r.name+'（'+r.studentNo+'）',r.name+'（'+r.studentNo+'）',...Array.from({length:maxN-1},()=>''),'','']);s2.push(['（未分组）',r.name,r.studentNo,'']);}
+       const buf=await buildXlsx([{name:'小组',rows:s1,widths:[20,6,22,...Array.from({length:maxN},()=>24),44,12]},{name:'成员',rows:s2,widths:[20,12,18,8]}]);
+       const xname=encodeURIComponent('小组名单-'+k.name+'-'+day(now())+'.xlsx');
+       return new Response(buf,{headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename*=UTF-8''${xname}`,'Cache-Control':'no-store'}});
+     }
      for(const r of loose)rows.push([k.name,c.title,'（未分组）','1',r.name+'（'+r.studentNo+'）',r.name+'（'+r.studentNo+'）','','']);
      return csvOf(rows,'小组名单');
    }
