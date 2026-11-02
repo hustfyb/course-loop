@@ -139,7 +139,7 @@ export async function api(req:Request,env:Platform){
      const rows:any[][]=[['课堂','课程','团队','人数','组长','成员','GitHub 仓库','创建时间']];
      for(const t of teams){const ms=mems.filter((m:any)=>m.teamId===t.id);const leader=ms.find((m:any)=>m.userId===t.leader);rows.push([k.name,c.title,t.name,String(ms.length),leader?leader.name+'（'+leader.studentNo+'）':'',ms.map((m:any)=>m.name+'（'+m.studentNo+'）').join('；'),t.repo||'',day(t.created)]);}
      const inTeam=new Set(mems.map((m:any)=>m.userId));const loose=roster.filter((r:any)=>!inTeam.has(r.id));
-     if(loose.length)rows.push([k.name,c.title,'（未分组）',String(loose.length),'',loose.map((r:any)=>r.name+'（'+r.studentNo+'）').join('；'),'','']);
+     for(const r of loose)rows.push([k.name,c.title,'（未分组）','1',r.name+'（'+r.studentNo+'）',r.name+'（'+r.studentNo+'）','','']);
      return csvOf(rows,'小组名单');
    }
    const rel=c.publishedId?await one('SELECT * FROM releases WHERE id=?',c.publishedId):null;const d=rel?parse(rel.content):parse(c.draft);const exps=(d.experiments||[]).filter((e:any)=>e.grading!=='none');
