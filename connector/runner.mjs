@@ -6,6 +6,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {runPiPrint} from './pi-print.mjs';
 import {extractDocument} from './documents.mjs';
+// 单个附件的说明：docx/pdf 的提取正文落盘为 *.extracted.md，让 read 工具能读到全文（issue #1 的核心 bug 是提取结果被丢弃）；
+// zip 直接给出解压清单；提取失败（扫描 PDF、超限压缩包、损坏文件）不炸掉整个任务，而是把原因交给模型兜底。
+async function describeAttachment(file,filePath,fname,bytes,dir){
+ const label=`文件 ${file.name}：${filePath}`;
+ let extracted;
+ try{extracted=await extractDocument(fname,bytes,dir);}
+ catch(e){
+  const why=String(e?.message||e).slice(0,300);
+  return `${label}\n⚠️ 自动提取失败：${why}\n该附件读不到正文时只能基于其他能读到的材料评分：不得因提取失败就判 0 分，请把 needsReview 设为 true，并在 limitations 中写明需要学生换用可解析的格式（docx/可复制文本的 PDF/Markdown）重交。`;
+ }
+ if(extracted.mode==='inline')return `${label}\n${extracted.text}`;
+ if(extracted.mode==='extracted'){
+  const outPath=path.join(dir,fname.slice(0,60)+'.extracted.md');
+  await fs.writeFile(outPath,extracted.text);
+  return `${label}（原始文件是二进制格式，不要直接 read）\n提取正文：${outPath}（用 read 工具分段读取全文；未读取的内容不得作为评分依据）`;
+ }
+ return `${label}（用 read 工具查看，未读取不得作为评分依据）${extracted.note?'\n'+extracted.note:''}`;
+}
 // 统一身份设定：系统中的 Agent 都叫「小课」。
 export const agentName='小课';
 export const agentIdentity='你是「小课」，课序平台的课程助手，负责课程内容核验与实验评分。';
@@ -32,7 +50,7 @@ export function startRunner({baseUrl,token,siteAccessToken='',acp=null,sendMail=
   const {job}=await request('poll',{acp:kind==='acp'&&!!getAcp(),mail:kind==='mail'&&!!sendMail});if(!job){await new Promise(r=>setTimeout(r,pollIntervalMs));continue;}let beat;try{
   log('处理任务',job.id,job.kind);
   if(job.kind==='email'){if(!sendMail)throw Error('邮件发送未配置');await sendMail({to:job.payload.to,subject:job.payload.subject,text:job.payload.text});await request('finish/'+job.id,{result:{delivered:true}},job.lease);log('任务完成',job.id);}
-  else{const spec=getAcp();if(!spec)throw Error('Pi 暂不可用');const work=path.join(workRoot,job.id+'-'+job.lease);await fs.mkdir(work,{recursive:true});const docs=[];for(const file of job.files||[]){const r=await fetch(baseUrl+`/api/connector/file/${job.id}/${file.id}`,{headers:{...accessHeaders,Authorization:'Bearer '+token,'x-job-lease':job.lease},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('无法下载任务附件');const bytes=await r.arrayBuffer();if(bytes.byteLength>20*1024*1024)throw Error('附件超过大小限制');const fname=file.name.replace(/[\\/:\x00-\x1f]/g,'_');const dir=path.join(work,file.id);await fs.mkdir(dir,{recursive:true});const filePath=path.join(dir,fname);await fs.writeFile(filePath,Buffer.from(bytes));const info=await extractDocument(fname,bytes,dir);docs.push(file.name.toLowerCase().endsWith('.zip')?`文件 ${file.name}：${filePath}\n${info}`:`文件 ${file.name}：${filePath}（用 read 工具查看，未读取不得作为评分依据）`);}
+  else{const spec=getAcp();if(!spec)throw Error('Pi 暂不可用');const work=path.join(workRoot,job.id+'-'+job.lease);await fs.mkdir(work,{recursive:true});const docs=[];for(const file of job.files||[]){const r=await fetch(baseUrl+`/api/connector/file/${job.id}/${file.id}`,{headers:{...accessHeaders,Authorization:'Bearer '+token,'x-job-lease':job.lease},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('无法下载任务附件');const bytes=await r.arrayBuffer();if(bytes.byteLength>20*1024*1024)throw Error('附件超过大小限制');const fname=file.name.replace(/[\\/:\x00-\x1f]/g,'_');const dir=path.join(work,file.id);await fs.mkdir(dir,{recursive:true});const filePath=path.join(dir,fname);await fs.writeFile(filePath,Buffer.from(bytes));docs.push(await describeAttachment(file,filePath,fname,bytes,dir));}
    // 渠道偶发卡死（空闲检测快速失败）、空响应、格式漂移或未通过网站校验：自动重试至多 maxAttempts 次，仍失败才报错
    let lastErr=null,lastResult=null;
    for(let attempt=1;attempt<=maxAttempts;attempt++){

@@ -2163,11 +2163,14 @@ export default function Workbench() {
                                 {detailIndividual
                                   ? `${s.user.name} · 个人判分实验，无需小组，以你本人名义提交。`
                                   : `${team.name} · `}
-                                上传 ZIP、Markdown 或相关证据。单个文件不超过 5
-                                MB。
+                                支持 ZIP、Markdown、DOCX、PDF、TXT/CSV/JSON 与
+                                PNG/JPG/MP4，单个文件不超过 5 MB。DOCX
+                                与可复制文本的 PDF 会自动提取正文评分；扫描版 PDF 和旧版
+                                .doc 读不到正文，请另存为 DOCX/PDF 或改交 Markdown。
                               </p>
                               <NativeFileInput
                                 visible
+                                accept=".md,.markdown,.txt,.docx,.pdf,.zip,.json,.jsonl,.csv,.py,.png,.jpg,.jpeg,.mp4"
                                 onPick={(f: FileList) => upload(f, true)}
                               />
                               <div className="attachment-list">
