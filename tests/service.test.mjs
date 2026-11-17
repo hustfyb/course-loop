@@ -556,3 +556,159 @@ test('grade-retry-all: 教师一键重试全部失败作业，学生 403，无�
  const r=await req(x,'grade-retry-all',{classId:kid},tc.cookie);assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.count,2);
  const jobs=x.sqlite.prepare('SELECT j.status FROM submissions s JOIN jobs j ON j.id=s.jobId').all();assert.deepEqual(jobs.map(j=>j.status),['queued','queued']);
  const r2=await req(x,'grade-retry-all',{classId:kid},tc.cookie);assert.equal(r2.data.count,0);});
+test('手工补交：教师代学生补交小组实验，折扣固定 20%，立即评分并按折扣发布',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'ms1@example.com'),s2=await login(x,'ms2@example.com'),lonely=await login(x,'ms3@example.com');
+ for(const p of [s1,s2,lonely])assert.equal((await req(x,'join',{code},p.cookie)).status,200);
+ const tid=(await req(x,'teams',{classId:kid,name:'补交组'},s1.cookie)).data.id;await req(x,'invite',{teamId:tid,email:'ms2@example.com'},s1.cookie);await req(x,'invite-action',{id:x.sqlite.prepare("SELECT id FROM invites WHERE email='ms2@example.com'").get().id,action:'accept'},s2.cookie);
+ const f=new FormData();f.set('classId',kid);f.set('file',new File(['late work'],'late.md'));const up=await req(x,'upload',f,t.cookie);assert.equal(up.status,200,JSON.stringify(up.data));
+ const body={classId:kid,studentId:s1.user.id,experimentId:'exp-1',fileIds:[up.data.id],note:'因病缺交'};
+ assert.equal((await req(x,'makeup-submit',body,s1.cookie)).status,403,'学生不能手工补交');
+ const other=await login(x,'msother@example.com','teacher');assert.equal((await req(x,'makeup-submit',body,other.cookie)).status,403,'非本课堂教师被拒');
+ assert.equal((await req(x,'makeup-submit',{...body,fileIds:[]},t.cookie)).status,400,'必须带作业文件');
+ assert.equal((await req(x,'makeup-submit',{...body,experimentId:'nope'},t.cookie)).status,400,'实验不存在');
+ assert.equal((await req(x,'makeup-submit',{...body,studentId:lonely.user.id},t.cookie)).status,400,'未分组学生不能代表小组补交');
+ const r=await req(x,'makeup-submit',body,t.cookie);assert.equal(r.status,200,JSON.stringify(r.data));
+ assert.equal(r.data.discount,20);assert.equal(r.data.ordinal,1);assert.equal(r.data.teamId,tid);
+ const sub=x.sqlite.prepare('SELECT * FROM submissions WHERE id=?').get(r.data.id);
+ assert.equal(sub.makeup,20);assert.equal(sub.mode,'formal');assert.equal(sub.teamId,tid);assert.equal(sub.studentId,null);assert.equal(JSON.parse(sub.members).length,2,'快照为小组成员');
+ assert.match(sub.note,/^\[教师手工补交\]/);assert.match(sub.note,/因病缺交/);
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const job=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(job.payload.submissionId,r.data.id);assert.equal(job.payload.discount,20);
+ const mkRes=(pl)=>({items:pl.experiment.rubric.map(rb=>({id:rb.id,score:rb.max,reason:'满足',evidence:['late.md:1']})),suggestions:[],total:100});
+ assert.equal((await req(x,'connector/finish/'+job.id,{result:mkRes(job.payload)},'',{...headers,'x-job-lease':job.lease})).status,200);
+ const rep=JSON.parse(x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(r.data.id).report);
+ assert.equal(rep.total,80,'满分补交扣 20% → 80');assert.equal(rep.makeup.discount,20);assert.equal(rep.items.find(i=>i.id==='r1').score,48,'单项同步打折 60→48');
+ const r2=await req(x,'makeup-submit',body,t.cookie);assert.equal(r2.status,200);assert.equal(r2.data.ordinal,2,'再次补交序号递增');
+ const st=(await req(x,'state',undefined,t.cookie)).data;const best=st.submissions.find(s=>s.experimentId==='exp-1'&&s.isBest);assert.equal(best.id,r.data.id,'80 分是当前最高分');});
+test('手工补交：个人判分实验按学生提交，不受 3 次上限约束',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);d.experiments[0].grading='individual';x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'mi1@example.com');assert.equal((await req(x,'join',{code},s1.cookie)).status,200);
+ const sf=new FormData();sf.set('classId',kid);sf.set('file',new File(['mine'],'mine.md'));const sup=await req(x,'upload',sf,s1.cookie);
+ const tf=new FormData();tf.set('classId',kid);tf.set('file',new File(['teacher'],'t.md'));const tup=await req(x,'upload',tf,t.cookie);
+ assert.equal((await req(x,'makeup-submit',{classId:kid,studentId:s1.user.id,experimentId:'exp-1',fileIds:[tup.data.id]},t.cookie)).status,200,'教师上传的文件可代交');
+ x.sqlite.prepare('DELETE FROM submissions WHERE experimentId=?').run('exp-1');
+ for(let i=0;i<3;i++)assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[sup.data.id]},s1.cookie)).status,200);
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[sup.data.id]},s1.cookie)).status,409,'自助提交仍受 3 次上限');
+ const r=await req(x,'makeup-submit',{classId:kid,studentId:s1.user.id,experimentId:'exp-1',fileIds:[sup.data.id]},t.cookie);
+ assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.ordinal,4,'手工补交突破 3 次上限');assert.equal(r.data.teamId,null);
+ const sub=x.sqlite.prepare('SELECT * FROM submissions WHERE id=?').get(r.data.id);assert.equal(sub.studentId,s1.user.id);assert.equal(sub.teamId,null);assert.equal(sub.makeup,20);
+ const st=(await req(x,'state',undefined,s1.cookie)).data;assert.equal(st.submissions.filter(s=>s.experimentId==='exp-1').length,4,'学生能看到教师代交的记录');});
+// GitHub 项目巡检：课程里加一个 grading='repo' 的实验（无交付物、rubric 合计 100）
+async function repoCourse(x){const {a,t,cid,kid,code}=await classroom(x);
+ const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);
+ d.experiments.push({id:'exp-repo',title:'GitHub 项目检查',week:'W15',summary:'s',task:'持续开发',deliverables:[],rubric:[{id:'r1',title:'持续提交',max:60,criteria:'c'},{id:'r2',title:'实质推进',max:40,criteria:'c'}],questions:[],instructions:'i',grading:'repo'});
+ x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200,JSON.stringify((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).data));
+ return {a,t,cid,kid,code};}
+test('repo grading: 巡检类实验可发布（无交付物、rubric 必须合计 100）',async()=>{const x=await init();const {a,t,cid}=await classroom(x);
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ await req(x,'chat',{courseId:cid,message:'整理',fileIds:[]},a.cookie);let j=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const d=j.payload.draft;d.experiments[0].grading='repo';delete d.experiments[0].deliverables;delete d.experiments[0].rubric;
+ const noRubric=await req(x,'connector/finish/'+j.id,{result:{draft:d}},'',{...headers,'x-job-lease':j.lease});assert.equal(noRubric.status,400,'巡检实验缺 rubric 被拒');
+ d.experiments[0].rubric=[{id:'r1',title:'持续提交',max:60,criteria:'c'},{id:'r2',title:'实质推进',max:30,criteria:'c'}];
+ const badSum=await req(x,'connector/finish/'+j.id,{result:{draft:d}},'',{...headers,'x-job-lease':j.lease});assert.equal(badSum.status,400,'rubric 合计须为 100');
+ d.experiments[0].rubric[1].max=40;
+ const ok=await req(x,'connector/finish/'+j.id,{result:{draft:d,message:'ok'}},'',{...headers,'x-job-lease':j.lease});assert.equal(ok.status,200,JSON.stringify(ok.data));
+ assert.equal((await req(x,'publish',{courseId:cid,revision:2},a.cookie)).status,200);
+ const st=(await req(x,'state',undefined,t.cookie)).data;assert.equal(st.draft.experiments[0].grading,'repo');});
+test('项目巡检（手工触发）：一次评估整仓历史、进行中跳过、失败隔离、成绩取最近一次、名单口径',async()=>{const x=await init();const {a,t,cid,kid,code}=await repoCourse(x);
+ const s1=await login(x,'rc1@example.com'),s2=await login(x,'rc2@example.com');
+ for(const p of [s1,s2])assert.equal((await req(x,'join',{code},p.cookie)).status,200);
+ const tid=(await req(x,'teams',{classId:kid,name:'巡检组'},s1.cookie)).data.id;
+ await req(x,'teams',{classId:kid,name:'无仓库组'},s2.cookie);
+ assert.equal((await req(x,'team-repo',{teamId:tid,repo:'https://github.com/example/proj.git'},s1.cookie)).status,200);
+ // 巡检类实验不接受学生提交
+ const uf=new FormData();uf.set('classId',kid);uf.set('teamId',tid);uf.set('file',new File(['x'],'x.md'));const ufid=(await req(x,'upload',uf,s1.cookie)).data.id;
+ const trySubmit=await req(x,'submit',{experimentId:'exp-repo',fileIds:[ufid]},s1.cookie);
+ assert.equal(trySubmit.status,400);assert.match(trySubmit.data.error,/无需提交/);
+ // 权限：学生、非本课堂教师都不能触发
+ assert.equal((await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo'},s1.cookie)).status,403);
+ const other=await login(x,'rcother@example.com','teacher');
+ assert.equal((await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo'},other.cookie)).status,403);
+ // 打桩：仓库元信息 + 两页提交（第 1 页 2 条、第 2 页空）
+ const realFetch=globalThis.fetch;
+ const mkCommits=()=>[{sha:'abc1234dead',commit:{author:{name:'张三',date:'2026-10-01T08:00:00Z'},message:'feat: 登录模块'}},{sha:'def5678beef',commit:{author:{name:'李四',date:'2026-11-05T09:30:00Z'},message:'fix: 修正接口'}}];
+ globalThis.fetch=async(url)=>{
+  const u=String(url);
+  if(/\/repos\/example\/proj$/.test(u))return {ok:true,json:async()=>({created_at:'2026-09-20T00:00:00Z',pushed_at:'2026-11-05T09:30:00Z',default_branch:'main'})};
+  if(u.includes('/commits?per_page=100&page=1'))return {ok:true,json:async()=>mkCommits()};
+  if(u.includes('/commits?per_page=100&page=2'))return {ok:true,json:async()=>[]};
+  return {ok:false,status:404,json:async()=>({}),text:async()=>''};
+ };
+ try{
+  const r1=await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo'},t.cookie);
+  assert.equal(r1.status,200,JSON.stringify(r1.data));
+  assert.equal(r1.data.scanned,1,'只有填了仓库的小组被巡检');assert.equal(r1.data.teams,1);assert.equal(r1.data.skipped,0);assert.equal(r1.data.failed.length,0);
+  const sub=x.sqlite.prepare("SELECT * FROM submissions WHERE mode='scan'").get();
+  assert.equal(sub.teamId,tid);assert.equal(sub.experimentId,'exp-repo');assert.equal(sub.fileIds,'[]');assert.equal(sub.makeup,0);assert.match(sub.note,/全部提交历史/);
+  const job=x.sqlite.prepare("SELECT * FROM jobs WHERE kind='repo-scan'").get();const pl=JSON.parse(job.payload);
+  assert.equal(pl.repo,'https://github.com/example/proj.git');assert.equal(pl.scope,'full-history');assert.equal(pl.window,undefined,'不再按窗口切片');
+  assert.match(pl.repoDigest,/评估范围：整个仓库历史/);assert.match(pl.repoDigest,/提交总数：2/);assert.match(pl.repoDigest,/feat: 登录模块/);assert.match(pl.repoDigest,/仓库创建：2026-09-20/);
+  // 评分进行中：再触发会跳过该组（避免重复花钱）
+  const r2=await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo'},t.cookie);
+  assert.equal(r2.data.scanned,0);assert.equal(r2.data.skipped,1);
+  // 评分完成后再次触发：新增一条（序号递增），而不是覆盖
+  const polled=(await req(x,'connector/poll',{acp:true},'',{authorization:'Bearer '+(await req(x,'pair',{},a.cookie)).data.token})).data.job;
+  assert.equal(polled.kind,'repo-scan');
+  const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+  const full={items:polled.payload.experiment.rubric.map(rb=>({id:rb.id,score:rb.max,reason:'持续提交',evidence:['repoDigest 2026-11-05 def5678']})),suggestions:[],baseline:true};
+  assert.equal((await req(x,'connector/finish/'+polled.id,{result:full},'',{...headers,'x-job-lease':polled.lease})).status,200);
+  const g1=x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(polled.payload.submissionId);
+  assert.equal(JSON.parse(g1.report).total,100);
+  const r3=await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo'},t.cookie);
+  assert.equal(r3.data.scanned,1,'完成后可以再次手工触发');
+  assert.deepEqual(x.sqlite.prepare("SELECT ordinal FROM submissions WHERE mode='scan' ORDER BY ordinal").all().map((r)=>r.ordinal),[1,2]);
+  // 拉取失败：计入 failed、不产生记录
+  globalThis.fetch=async()=>({ok:false,status:500,json:async()=>({}),text:async()=>''});
+  const r4=await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo'},t.cookie);
+  assert.equal(r4.data.scanned,0);assert.equal(r4.data.failed.length,0,'正在评分中的组会先被跳过');
+  // 指定 teamId：只巡检这一组
+  globalThis.fetch=async(url)=>{const u=String(url);if(/\/repos\/example\/proj$/.test(u))return {ok:true,json:async()=>({created_at:'2026-09-20T00:00:00Z',pushed_at:'2026-11-05T09:30:00Z',default_branch:'main'})};if(u.includes('/commits?per_page=100&page=1'))return {ok:true,json:async()=>mkCommits()};return {ok:true,json:async()=>[]};};
+  const pendingJob=x.sqlite.prepare("SELECT id FROM jobs WHERE kind='repo-scan' AND status='queued'").get();
+  assert.ok(pendingJob,'r3 触发的任务在排队');
+  assert.equal((await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo',teamId:tid},t.cookie)).data.skipped,1);
+  assert.equal((await req(x,'repo-scan-now',{classId:kid,experimentId:'exp-repo',teamId:'not-a-team'},t.cookie)).data.teams,0,'teamId 不是本课堂的组时不巡检');
+  // 成绩取「最近一次巡检」：把第 2 条打成 50 分，计成绩的应当变成它（而不是之前 100 分那条）
+  const job2=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(job2.kind,'repo-scan');
+  const half={items:job2.payload.experiment.rubric.map((rb)=>({id:rb.id,score:Math.round(rb.max*0.5),reason:'提交集中在前几天',evidence:['repoDigest 2026-10-01 abc1234']})),suggestions:[],baseline:false};
+  assert.equal((await req(x,'connector/finish/'+job2.id,{result:half},'',{...headers,'x-job-lease':job2.lease})).status,200);
+  const st=(await req(x,'state',undefined,t.cookie)).data;
+  const scans=st.submissions.filter((v)=>v.mode==='scan'&&v.experimentId==='exp-repo');
+  assert.equal(scans.find((v)=>v.isBest).id,job2.payload.submissionId,'巡检类实验取最近一次巡检');
+  // 名单：巡检实验列叫「巡检次数」，值=次数，最高分跟最近一次走
+  const csv=Buffer.from(await (await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:t.cookie}}),x.env)).arrayBuffer()).toString('utf8');
+  const rowsCsv=csv.split(String.fromCharCode(10)).map((l)=>l.trim()).filter(Boolean);
+  const headRow=rowsCsv[0].split(',');
+  const ci=headRow.indexOf('GitHub 项目检查 巡检次数'),bi=headRow.indexOf('GitHub 项目检查 最高分');
+  assert.ok(ci>0&&bi>0,'名单含巡检次数列');assert.equal(headRow.indexOf('GitHub 项目检查 提交次数'),-1);
+  const rowCsv=rowsCsv.find((l)=>l.includes('巡检组')).split(',');
+  assert.equal(rowCsv[ci],'2','巡检次数按记录数');assert.equal(rowCsv[bi],'50','最高分跟最近一次巡检走');
+ }finally{globalThis.fetch=realFetch;}
+});
+test('课堂改绑与删除：空课堂可换课/可删，非本人课程与已有人群的课堂被拒',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ const c2=(await req(x,'courses',{title:'第二门课',term:'T2'},t.cookie)).data.id;
+ // 别人的课堂 / 别人的课程
+ const other=await login(x,'rbother@example.com','teacher');
+ assert.equal((await req(x,'class-rebind',{classId:kid,courseId:c2},other.cookie)).status,403);
+ const c3=(await req(x,'courses',{title:'别人的课',term:'T3'},other.cookie)).data.id;
+ assert.equal((await req(x,'class-rebind',{classId:kid,courseId:c3},t.cookie)).status,403);
+ assert.equal((await req(x,'class-rebind',{classId:kid,courseId:'nope'},t.cookie)).status,404);
+ // 空课堂可以改绑
+ assert.equal((await req(x,'class-rebind',{classId:kid,courseId:c2},t.cookie)).status,200);
+ assert.equal(x.sqlite.prepare('SELECT courseId FROM classes WHERE id=?').get(kid).courseId,c2);
+ assert.equal((await req(x,'class-rebind',{classId:kid,courseId:c2},t.cookie)).status,409,'已在目标课程下');
+ assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM audit WHERE action='class.rebind'").get().n,1);
+ // 有学生后既不能改绑也不能删除
+ const s1=await login(x,'rb1@example.com');await req(x,'join',{code},s1.cookie);
+ const c4=(await req(x,'courses',{title:'第三门课',term:'T4'},t.cookie)).data.id;
+ assert.equal((await req(x,'class-rebind',{classId:kid,courseId:c4},t.cookie)).status,409,'有学生时不能改绑');
+ assert.match((await req(x,'class-delete',{classId:kid},t.cookie)).data.error,/已有学生/);
+ // 另一个空课堂可以删除
+ const k2=(await req(x,'classes',{courseId:c2,name:'待删课堂'},t.cookie)).data;
+ assert.equal((await req(x,'class-delete',{classId:k2.id},s1.cookie)).status,403,'非本课堂教师不能删');
+ assert.equal((await req(x,'class-delete',{classId:k2.id},t.cookie)).status,200);
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM classes WHERE id=?').get(k2.id).n,0);
+ assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM audit WHERE action='class.delete'").get().n,1);
+ assert.equal((await req(x,'class-delete',{classId:k2.id},t.cookie)).status,404);});

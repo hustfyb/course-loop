@@ -227,6 +227,111 @@ function NativeFileInput({ inputRef, onPick, accept, visible }: Any) {
     />
   );
 }
+// 快捷选择：输入关键字（姓名/学号/邮箱、实验名）过滤，回车选中第一项；列表展示完整文本，
+// 避免 Select 里长标题被截断、学生名单要一个个翻。
+function QuickPick({
+  q,
+  onQuery,
+  items,
+  value,
+  onPick,
+  placeholder,
+  empty,
+  hint,
+}: {
+  q: string;
+  onQuery: (v: string) => void;
+  items: Any[];
+  value: string;
+  onPick: (it: Any) => void;
+  placeholder: string;
+  empty: string;
+  hint?: string;
+}) {
+  const kw = (q || '').trim().toLowerCase();
+  const list = (kw
+    ? items.filter((it: Any) =>
+        String(it.search || '').toLowerCase().includes(kw),
+      )
+    : items
+  ).slice(0, 60);
+  // 默认收起：点到输入框（聚焦）或有输入关键字时才展开候选
+  const [open, setOpen] = useState(false);
+  const expanded = open || kw.length > 0;
+  // 有选中项时，选中项的名称直接显示在输入框里（不再占用下方一行）
+  const chosen = items.find((it: Any) => it.id === value) || null;
+  const shown = q || (chosen ? chosen.label : '');
+  return (
+    <div
+      className="quick-pick"
+      onFocus={() => setOpen(true)}
+      // 焦点离开整个选择器就收起（点候选不会失焦：候选用 mousedown 阻止了默认聚焦）
+      onBlur={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setOpen(false);
+        // 离开时把过滤词收起，输入框回到「显示已选项」的状态（像原生下拉那样）
+        if (chosen) onQuery('');
+      }}
+    >
+      <input
+        className="quick-search"
+        value={shown}
+        placeholder={placeholder}
+        onChange={(e) => {
+          onQuery(e.target.value);
+          setOpen(true);
+        }}
+        onClick={() => setOpen(true)}
+        onFocus={(e) => {
+          setOpen(true);
+          // 聚焦时全选，输入即替换已选项
+          e.currentTarget.select();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (list[0]) {
+              onPick(list[0]);
+              setOpen(false);
+            }
+          } else if (e.key === 'Escape') {
+            setOpen(false);
+            if (chosen) onQuery('');
+          }
+        }}
+      />
+      {expanded && (
+        <div className="quick-list">
+          {list.length ? (
+            list.map((it: Any) => (
+              <button
+                type="button"
+                key={it.id}
+                className={'quick-item' + (it.id === value ? ' chosen' : '')}
+                // 阻止默认聚焦，避免点选时输入框失焦导致列表闪退
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onPick(it);
+                  setOpen(false);
+                }}
+              >
+                <span>{it.label}</span>
+                {it.hint ? <small>{it.hint}</small> : null}
+              </button>
+            ))
+          ) : (
+            <span className="quick-empty">{empty}</span>
+          )}
+        </div>
+      )}
+      <small className="muted">
+        {expanded
+          ? `共 ${items.length} 项${kw ? `，匹配 ${list.length} 项` : ''}`
+          : `点击展开${kw ? `（匹配 ${list.length} 项）` : `（共 ${items.length} 项）`}${hint ? '，' + hint : ''}`}
+      </small>
+    </div>
+  );
+}
 // 小课模型选择：输入框 + 自绘下拉（原生 datalist 弹层在部分环境不可控）
 function PiModelPicker({
   models,
@@ -421,6 +526,8 @@ export default function Workbench() {
   const [courseSel, setCourseSel] = useState('');
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<Any[]>([]);
+  // 教师手工补交：代交文件单独存放，避免与学生自助提交的附件混用
+  const [makeupFiles, setMakeupFiles] = useState<Any[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -435,6 +542,7 @@ export default function Workbench() {
   const assistScrollRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const makeupRef = useRef<HTMLInputElement>(null);
   const refresh = useCallback(async () => {
     try {
       const r = s.user?.role;
@@ -569,7 +677,9 @@ export default function Workbench() {
   const team = s.teams?.find((t: Any) => t.id === s.myTeam);
   const detailIndividual = detail?.grading === 'individual';
   const expSubs = detail
-    ? (s.submissions || []).filter((x: Any) => x.experimentId === detail.id)
+    ? (s.submissions || []).filter(
+        (x: Any) => x.experimentId === detail.id && x.mode !== 'scan',
+      )
     : [];
   const formalUsed = expSubs.length;
   const currentNav = navs.find((n) => n[0] === view) || navs[0];
@@ -581,6 +691,52 @@ export default function Workbench() {
     name: string;
   } | null>(null);
   const reportExps: Any[] = draft.experiments || [];
+  // 巡检类实验（grading='repo'）：学生无需提交，由平台每天读 GitHub 提交记录评分
+  const repoExps: Any[] = reportExps.filter((e: Any) => e.grading === 'repo');
+  // 巡检按小组触发：候选小组 = 本课堂已填仓库的组（含「全部小组」一项）
+  const repoTeamPicks: Any[] = [
+    { id: '', search: '全部 all', label: '全部已填仓库的小组', hint: '' },
+    ...(s.teams || [])
+      .filter((t: Any) => (t.repo || '').trim())
+      .map((t: Any) => ({
+        id: t.id,
+        search: `${t.name} ${t.repo}`,
+        label: t.name,
+        hint: t.repo,
+      })),
+  ];
+  // 手工补交的学生/实验候选项：带全量可搜索文本，长标题在列表里换行显示，不必逐个翻
+  const studentPicks: Any[] = (s.students || []).map((st: Any) => {
+    const teamName =
+      (s.teams || []).find((t: Any) => t.id === st.teamId)?.name || '';
+    return {
+      id: st.id,
+      search: [st.name, st.studentNo, st.email, teamName].join(' '),
+      label: `${st.name}（${st.studentNo || '无学号'}）${teamName ? ' · ' + teamName : ' · 未分组'}`,
+      hint: st.email || '',
+    };
+  });
+  // 发布前必须清掉的待确认事项：顶层 questions + 每个实验的 questions
+  const draftIssues: Any[] = [
+    ...((studioDraft.questions || []) as string[]).map((q: string) => ({
+      where: '课程',
+      q,
+    })),
+    ...((studioDraft.experiments || []) as Any[]).flatMap((e: Any) =>
+      ((e.questions || []) as string[]).map((q: string) => ({
+        where: e.title,
+        q,
+      })),
+    ),
+  ];
+  const expPicks: Any[] = reportExps
+    .filter((e: Any) => e.grading !== 'none')
+    .map((e: Any) => ({
+      id: e.id,
+      search: `${e.title} ${e.id} ${e.week || ''}`,
+      label: e.title,
+      hint: `${e.grading === 'individual' ? '个人判分' : e.grading === 'repo' ? 'GitHub 巡检' : '小组判分'} · ${e.id}${e.week ? ' · ' + e.week : ''}`,
+    }));
   const activeReportExp =
     reportExps.find((e: Any) => e.id === reportExp)?.id ||
     reportExps.find((e: Any) =>
@@ -635,7 +791,8 @@ export default function Workbench() {
   const subDetail = (sub: Any) => (
     <>
       <p className="muted">
-        {sub.teamName || sub.members[0]?.name} · 第 {sub.ordinal} 次提交 ·{' '}
+        {sub.teamName || sub.members[0]?.name} · 第 {sub.ordinal} 次
+        {sub.mode === 'scan' ? '巡检（GitHub 项目检查，教师触发）' : '提交'} ·{' '}
         {fmt(sub.created)}
         {sub.makeup > 0 ? ` · 补交（扣 ${sub.makeup}%）` : ''} · 快照成员：
         {sub.members.map((m: Any) => m.name).join('、')}
@@ -833,6 +990,25 @@ export default function Workbench() {
         setAttachments((a) => [...a, f]);
       }
       setNotice('文件已上传，可随消息或作业一起提交。');
+    });
+  }
+  // 教师手工补交用的上传：文件归属本课堂（owner=教师），不绑定小组
+  async function uploadMakeup(files: FileList | null) {
+    if (!files?.length) return;
+    await act(async () => {
+      if (!s.selected) throw Error('请先选择课堂');
+      for (const file of Array.from(files)) {
+        if (file.size > 5 * 1024 * 1024)
+          throw Error(
+            '单个文件不能超过 5 MB（' + file.name + '），请压缩后再上传',
+          );
+        const data = new FormData();
+        data.set('classId', s.selected);
+        data.set('file', file);
+        const f = await call('upload', data);
+        setMakeupFiles((a) => [...a, f]);
+      }
+      setNotice('文件已上传，可确认补交。');
     });
   }
   async function importCourse(files: File[]) {
@@ -2060,11 +2236,43 @@ export default function Workbench() {
                       body={
                         teacher
                           ? canManageCurrent
-                            ? '你是本课程负责人，可在「课程工作台」编排并发布实验。'
+                            ? draftIssues.length
+                              ? `你是本课程负责人。当前草案还有 ${draftIssues.length} 项待确认，清空后才能发布（发布入口在右上「预览并发布」）。`
+                              : '你是本课程负责人。点右上「预览并发布」即可发布当前草案，学生随后就能看到。'
                             : '课程负责人发布实验后，你的课堂即可开始。'
                           : '等待课程负责人发布实验任务。'
                       }
-                    />
+                    >
+                      {canManageCurrent && (
+                        <div className="button-row">
+                          {draftIssues.length ? (
+                            <Button
+                              variant="outline"
+                              onClick={() => go('studio')}
+                            >
+                              去课程工作台补充
+                            </Button>
+                          ) : (
+                            <Button
+                              disabled={busy || !course}
+                              onClick={() => open('publish')}
+                            >
+                              <Send size={16} />
+                              预览并发布
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      {canManageCurrent && draftIssues.length > 0 && (
+                        <ul className="issue-list">
+                          {draftIssues.map((it: Any, i: number) => (
+                            <li key={i}>
+                              <strong>{it.where}</strong>：{it.q}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </Empty>
                   )}
                   {detail && (
                     <section className="panel detail-panel">
@@ -2134,7 +2342,18 @@ export default function Workbench() {
                           )}
                         </div>
                       </div>
-                      {student && detail.grading !== 'none' && (
+                      {student && detail.grading === 'repo' && (
+                        <div className="submission-box">
+                          <h3>本项目由教师手工触发检查</h3>
+                          <p className="muted">
+                            无需提交作业：教师触发一次，小课读取本组仓库的全部提交历史并按「是否持续开发」评分。
+                          </p>
+                          <p className="muted">
+                            请在「我的 Team」填好仓库地址并保持提交；仓库为空或无提交会直接影响得分。
+                          </p>
+                        </div>
+                      )}
+                      {student && detail.grading !== 'none' && detail.grading !== 'repo' && (
                         <div className="submission-box">
                           <h3>
                             {detailIndividual ? '提交我的成果' : '提交本组成果'}
@@ -2233,6 +2452,7 @@ export default function Workbench() {
                                     >
                                       <span className="tag">
                                         第 {sub.ordinal} 次
+                                        {sub.mode === 'scan' ? '巡检' : ''}
                                       </span>
                                       {sub.makeup > 0 && (
                                         <span className="tag">
@@ -2715,7 +2935,11 @@ export default function Workbench() {
                             <TableHead>
                               {expIndividual ? '学生' : '小组'}
                             </TableHead>
-                            <TableHead>提交次数</TableHead>
+                            <TableHead>
+                              {activeExpDetail?.grading === 'repo'
+                                ? '巡检次数'
+                                : '提交次数'}
+                            </TableHead>
                             <TableHead>最高分</TableHead>
                             <TableHead>状态</TableHead>
                           </TableRow>
@@ -2856,7 +3080,8 @@ export default function Workbench() {
                                 <div>
                                   <div className="button-row">
                                     <span className="tag">
-                                      第 {sub.ordinal} 次提交
+                                      第 {sub.ordinal} 次
+                                      {sub.mode === 'scan' ? '巡检' : '提交'}
                                       {sub.superseded ? ' · 已被替代' : ''}
                                     </span>
                                     {sub.isBest && (
@@ -3247,6 +3472,45 @@ export default function Workbench() {
                         </dd>
                       </div>
                       <div>
+                        <dt>项目巡检</dt>
+                        <dd>
+                          {repoExps.length ? (
+                            <>
+                              {repoExps.map((e: Any) => {
+                                const scans = (s.submissions || []).filter(
+                                  (x: Any) =>
+                                    x.mode === 'scan' && x.experimentId === e.id,
+                                );
+                                const last = scans.length
+                                  ? Math.max(
+                                      ...scans.map((x: Any) => x.created || 0),
+                                    )
+                                  : 0;
+                                return (
+                                  <div key={e.id}>
+                                    {e.title}：
+                                    {last ? (
+                                      <>
+                                        上次巡检 {fmt(last)}（{scans.length} 条记录）
+                                      </>
+                                    ) : (
+                                      <span className="muted">尚未巡检</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              <div className="muted">
+                                手工触发；成绩取最近一次巡检，不占提交次数
+                              </div>
+                            </>
+                          ) : (
+                            <span className="muted">
+                              课程没有巡检类实验
+                            </span>
+                          )}
+                        </dd>
+                      </div>
+                      <div>
                         <dt>补交窗口</dt>
                         <dd>
                           {classMakeup ? (
@@ -3288,6 +3552,8 @@ export default function Workbench() {
                       <Button
                         variant="outline"
                         onClick={() => {
+                          // open() 会重置 form，必须先把弹窗打开再回填，否则字段会被清空
+                          open('makeup');
                           setForm({
                             start: classMakeup
                               ? localInput(classMakeup.start)
@@ -3297,10 +3563,55 @@ export default function Workbench() {
                               ? String(classMakeup.discount)
                               : '',
                           });
-                          open('makeup');
                         }}
                       >
                         补交设置
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          open('makeupSubmit');
+                          setForm({
+                            studentId: '',
+                            experimentId: '',
+                            note: '',
+                            studentQ: '',
+                            expQ: '',
+                          });
+                          setMakeupFiles([]);
+                        }}
+                      >
+                        手工补交
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={!repoExps.length}
+                        onClick={() => {
+                          open('repoCheck');
+                          setForm({
+                            experimentId: repoExps[0]?.id || '',
+                            expQ: '',
+                            teamId: '',
+                            teamQ: '',
+                          });
+                        }}
+                      >
+                        项目巡检（手工）
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          open('rebindClass');
+                          setForm({ courseId: cls?.courseId || '', courseQ: '' });
+                        }}
+                      >
+                        更换课程
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => open('delClass')}
+                      >
+                        删除课堂
                       </Button>
                     </div>
                   </section>
@@ -3340,6 +3651,8 @@ export default function Workbench() {
                     delCourse: '删除课程',
                     transfer: '移交课程负责人',
                     makeup: '课堂补交设置',
+                    makeupSubmit: '手工补交（教师代交）',
+                    repoCheck: '项目巡检（手工触发）',
                     delFile: '删除课程素材',
                     newClass: '开设课堂',
                     join: '加入课堂',
@@ -3355,6 +3668,8 @@ export default function Workbench() {
                     review: '复核与成绩发布',
                     pair: '生成连接器凭据',
                     settings: '课堂规则',
+                    rebindClass: '更换课堂所属课程',
+                    delClass: '删除课堂',
                     repo: 'GitHub 仓库地址',
                     feedback: '提改进意见',
                   } as Any
@@ -3378,7 +3693,9 @@ export default function Workbench() {
                           ? '输入教师分享的课堂邀请码，加入后即可进行实验。'
                           : modal?.type === 'feedback'
                             ? '使用中遇到的问题或改进建议都会记录，课程负责人会定期查阅。'
-                            : '提交前请核对内容。'}
+                            : modal?.type === 'repoCheck'
+                              ? '手工触发一次，小课读取整个仓库的提交历史并评分。'
+                              : '提交前请核对内容。'}
             </DialogDescription>
           </DialogHeader>
           {error && (
@@ -3592,14 +3909,18 @@ export default function Workbench() {
                     <SelectValue placeholder="选择一门课程">
                       {(v: string) => {
                         const c = s.courses?.find((x: Any) => x.id === v);
-                        return c ? `${c.title} · ${c.term}` : '选择一门课程';
+                        return c
+                          ? `${c.title} · ${c.term} · ${c.managed === false ? '非本人负责' : '我负责'}`
+                          : '选择一门课程';
                       }}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {s.courses?.map((c: Any) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.title} · {c.term}
+                        {c.title} · {c.term} ·{' '}
+                        {c.managed === false ? '非本人负责' : '我负责'} ·{' '}
+                        {c.publishedId ? '已发布' : '未发布'}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -3913,6 +4234,283 @@ export default function Workbench() {
               </div>
             </>
           )}
+          {modal?.type === 'rebindClass' && (
+            <>
+              <p>
+                把课堂「<strong>{cls?.name}</strong>」换到另一门课程下。课堂里的实验内容来自课程**已发布**的版本，换课后学生看到的实验随之变化。
+              </p>
+              <p className="muted">
+                只能换到自己负责的课程；课堂里已有学生、小组、提交或文件时不允许更换（避免打乱教学记录），这种情况请新开一个课堂。课堂邀请码、小组上限、截止时间都会保留。
+              </p>
+              <label>
+                目标课程
+                <QuickPick
+                  q={form.courseQ || ''}
+                  onQuery={(v) => field('courseQ', v)}
+                  items={(s.courses || [])
+                    .filter(
+                      (c: Any) =>
+                        c.id !== cls?.courseId &&
+                        (admin || c.managed !== false),
+                    )
+                    .map((c: Any) => ({
+                      id: c.id,
+                      search: `${c.title} ${c.term}`,
+                      label: `${c.title} · ${c.term}`,
+                      hint: c.publishedId
+                        ? `已发布 · 草案 v${c.revision}`
+                        : `未发布 · 草案 v${c.revision}（发布后课堂才会显示实验）`,
+                    }))}
+                  value={form.courseId || ''}
+                  onPick={(it: Any) => {
+                    field('courseId', it.id);
+                    field('courseQ', '');
+                  }}
+                  placeholder="选择目标课程（可搜索）"
+                  hint="可输入课程名/学期过滤"
+                  empty="没有可换的课程"
+                />
+              </label>
+              <div className="button-row">
+                <Button
+                  disabled={busy || !cls || !form.courseId || form.courseId === cls?.courseId}
+                  onClick={() =>
+                    act(async () => {
+                      await call('class-rebind', {
+                        classId: s.selected,
+                        courseId: form.courseId,
+                      });
+                      setModal(null);
+                      setNotice('课堂已更换课程，刷新后按新课程显示');
+                    })
+                  }
+                >
+                  确认更换
+                </Button>
+              </div>
+            </>
+          )}
+          {modal?.type === 'delClass' && (
+            <>
+              <p>
+                将删除课堂「<strong>{cls?.name}</strong>」及其课堂邀请码。学生将无法再用该邀请码加入。
+              </p>
+              <p className="muted">
+                只有完全为空的课堂才能删除（没有学生、小组、提交或文件）。已有教学记录的课堂不能删除。
+              </p>
+              <div className="button-row">
+                <Button
+                  variant="outline"
+                  disabled={busy || !cls}
+                  onClick={() =>
+                    act(async () => {
+                      await call('class-delete', { classId: s.selected });
+                      setSelected('');
+                      setModal(null);
+                      setView('classes');
+                      setNotice('课堂已删除');
+                    })
+                  }
+                >
+                  确认删除课堂
+                </Button>
+              </div>
+            </>
+          )}
+          {modal?.type === 'repoCheck' && (
+            <>
+              <p className="muted">
+                评估整个仓库的提交历史；成绩取最近一次巡检。
+              </p>
+              <label>
+                实验
+                <QuickPick
+                  q={form.expQ || ''}
+                  onQuery={(v) => field('expQ', v)}
+                  items={repoExps.map((e: Any) => ({
+                    id: e.id,
+                    search: `${e.title} ${e.id}`,
+                    label: e.title,
+                    hint: `GitHub 巡检 · ${e.id}`,
+                  }))}
+                  value={form.experimentId || ''}
+                  onPick={(it: Any) => {
+                    field('experimentId', it.id);
+                    field('expQ', '');
+                  }}
+                  placeholder="选择巡检实验"
+                  hint="可输入实验名过滤"
+                  empty="课程里没有巡检类实验"
+                />
+              </label>
+              <label>
+                小组
+                <QuickPick
+                  q={form.teamQ || ''}
+                  onQuery={(v) => field('teamQ', v)}
+                  items={repoTeamPicks}
+                  value={form.teamId || ''}
+                  onPick={(it: Any) => {
+                    field('teamId', it.id);
+                    field('teamQ', '');
+                  }}
+                  placeholder="全部小组（可搜索组名/仓库）"
+                  hint="可输入组名/仓库地址过滤"
+                  empty="本课堂没有小组填写 GitHub 仓库地址"
+                />
+              </label>
+              <div className="button-row">
+                <Button
+                  disabled={busy || !cls || !form.experimentId}
+                  onClick={() =>
+                    act(async () => {
+                      const r = await call('repo-scan-now', {
+                        classId: s.selected,
+                        experimentId: form.experimentId,
+                        teamId: form.teamId || undefined,
+                      });
+                      setModal(null);
+                      const failed: string[] = r.failed || [];
+                      setNotice(
+                        r.scanned
+                          ? `已发起巡检：${r.scanned} 个小组任务已排队，评分完成后自动发布${
+                              r.skipped ? `（${r.skipped} 个正在评分中，已跳过）` : ''
+                            }${failed.length ? `；失败 ${failed.length}：${failed[0]}` : ''}`
+                          : failed.length
+                            ? `巡检失败：${failed[0]}`
+                            : r.skipped
+                              ? `${r.skipped} 个小组正在评分中，稍后再触发即可`
+                              : '本课堂还没有小组填写 GitHub 仓库地址：请学生先在「我的 Team」填写仓库，再回来巡检',
+                      );
+                    })
+                  }
+                >
+                  开始巡检
+                </Button>
+              </div>
+              <p className="muted">
+                每组消耗一次模型额度（已填仓库 {repoTeamPicks.length - 1} 组，评分中的跳过）。
+              </p>
+            </>
+          )}
+          {modal?.type === 'makeupSubmit' && (
+            <>
+              <p>
+                以教师身份替指定学生补交指定实验的作业。成绩按折扣{' '}
+                <strong>20%</strong> 计算（原始得分 × 0.8），提交后立即评分并按折扣发布。
+              </p>
+              <p className="muted">
+                与学生自助补交窗口无关，任何时间都可用；计入该实验 3
+                次提交上限，最终成绩仍取最高分。小组判分的实验会以该学生所在小组的名义提交。
+              </p>
+              <label>
+                学生
+                <QuickPick
+                  q={form.studentQ || ''}
+                  onQuery={(v) => field('studentQ', v)}
+                  items={studentPicks}
+                  value={form.studentId || ''}
+                  onPick={(it: Any) => {
+                    field('studentId', it.id);
+                    field('studentQ', '');
+                  }}
+                  placeholder="选择学生（姓名 / 学号 / 邮箱）"
+                  hint="可输入姓名/学号/邮箱过滤"
+                  empty="没有匹配的学生"
+                />
+              </label>
+              <label>
+                实验
+                <QuickPick
+                  q={form.expQ || ''}
+                  onQuery={(v) => field('expQ', v)}
+                  items={expPicks}
+                  value={form.experimentId || ''}
+                  onPick={(it: Any) => {
+                    field('experimentId', it.id);
+                    field('expQ', '');
+                  }}
+                  placeholder="选择实验（名称 / 编号）"
+                  hint="可输入实验名或编号过滤"
+                  empty="没有匹配的实验"
+                />
+              </label>
+              <label>
+                作业文件（单个不超过 5 MB）
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => makeupRef.current?.click()}
+                >
+                  <Paperclip size={15} />
+                  选择文件
+                </Button>
+                <NativeFileInput
+                  inputRef={makeupRef}
+                  onPick={(f: FileList) => uploadMakeup(f)}
+                  accept=".md,.markdown,.txt,.docx,.pdf,.zip,.json,.jsonl,.csv,.py,.png,.jpg,.jpeg,.mp4"
+                />
+                <div className="attachment-list">
+                  {makeupFiles.map((f: Any) => (
+                    <span key={f.id}>
+                      {f.name}
+                      <button
+                        aria-label="移除文件"
+                        onClick={() =>
+                          setMakeupFiles((a) =>
+                            a.filter((x: Any) => x.id !== f.id),
+                          )
+                        }
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </label>
+              <label>
+                说明（可选）
+                <textarea
+                  className="text-area"
+                  placeholder="例如：学生因病缺交，已核对纸质稿后由教师代交"
+                  value={form.note || ''}
+                  onChange={(e) => field('note', e.target.value)}
+                />
+              </label>
+              <div className="button-row">
+                <Button
+                  disabled={
+                    busy ||
+                    !cls ||
+                    !form.studentId ||
+                    !form.experimentId ||
+                    !makeupFiles.length
+                  }
+                  onClick={() =>
+                    act(async () => {
+                      const r = await call('makeup-submit', {
+                        classId: s.selected,
+                        studentId: form.studentId,
+                        experimentId: form.experimentId,
+                        fileIds: makeupFiles.map((f: Any) => f.id),
+                        note: form.note || '',
+                      });
+                      setModal(null);
+                      setMakeupFiles([]);
+                      setNotice(
+                        `已代交（第 ${r.ordinal} 次，折扣 ${r.discount}%），评分完成后按折扣发布`,
+                      );
+                    })
+                  }
+                >
+                  确认补交
+                </Button>
+                <span className="muted">
+                  折扣固定 20%，提交后不可撤回；评分完成前可在成绩列表中看到进度。
+                </span>
+              </div>
+            </>
+          )}
           {modal?.type === 'delFile' && (
             <>
               <p>
@@ -3957,13 +4555,33 @@ export default function Workbench() {
                   </li>
                 ))}
               </ul>
-              {draft.questions?.length > 0 && (
-                <p className="dialog-error">
-                  还有 {draft.questions.length} 项待确认，请先回到对话补充。
-                </p>
+              {draftIssues.length > 0 && (
+                <>
+                  <p className="dialog-error">
+                    还有 {draftIssues.length} 项待确认，清空后才能发布：
+                  </p>
+                  <ul className="issue-list">
+                    {draftIssues.map((it: Any, i: number) => (
+                      <li key={i}>
+                        <strong>{it.where}</strong>：{it.q}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="button-row">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setModal(null);
+                        go('studio');
+                      }}
+                    >
+                      去课程工作台补充
+                    </Button>
+                  </div>
+                </>
               )}
               <Button
-                disabled={busy || !!draft.questions?.length}
+                disabled={busy || draftIssues.length > 0}
                 onClick={() =>
                   mutation(
                     'publish',

@@ -212,3 +212,21 @@ tr.sub-detail-row>td{padding:0 14px;white-space:normal}
 .settings-card>.button-row{margin-top:0}
 .settings-card>h2+p{margin-bottom:16px}
 .settings-card [data-slot=button]{font-size:13px}
+
+/* 弹窗里的快捷选择（手工补交/项目巡检）：输入过滤 + 可滚动列表，长标题换行不截断 */
+.quick-pick{display:flex;flex-direction:column;gap:9px;margin-top:9px}
+.quick-search{width:100%;border:1px solid #dbe3ef;border-radius:8px;padding:10px 12px;font-size:14px;background:#fff;color:#455570;text-overflow:ellipsis}
+.quick-search:focus{outline:2px solid #c9d8f7;outline-offset:1px;border-color:#93aee8}
+.quick-list{max-height:216px;overflow:auto;border:1px solid #e3e9f2;border-radius:8px;background:#fff}
+.quick-item{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;padding:10px 12px;border:0;border-bottom:1px solid #f1f4fa;background:transparent;cursor:pointer;font-size:14px;line-height:1.6;color:#41506a;font-family:inherit}
+.quick-item:last-child{border-bottom:0}
+.quick-item:hover{background:#f4f7fd}
+.quick-item.chosen{background:#edf2ff;color:#315ce8;font-weight:600}
+.quick-item>span{overflow-wrap:anywhere}
+.quick-item small{color:#8c98aa;font-size:12px;font-weight:400}
+.quick-empty{display:block;padding:14px 12px;font-size:13px;color:#8c98aa}
+
+/* 发布前待确认清单：直接列出阻塞项，不再只给一行"回对话补充" */
+.issue-list{margin:10px 0 0;padding-left:0;list-style:none;max-height:220px;overflow:auto}
+.issue-list>li{padding:8px 10px;border-left:3px solid #e2b04a;background:#fffbf0;border-radius:4px;font-size:13px;line-height:1.65;color:#6b5b3e;margin-bottom:6px;overflow-wrap:anywhere}
+.issue-list>li strong{color:#8a6d2f;margin-right:2px}

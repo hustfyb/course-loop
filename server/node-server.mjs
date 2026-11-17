@@ -12,6 +12,7 @@ import {promisify} from 'node:util';
 import {Readable} from 'node:stream';
 import {DatabaseSync} from 'node:sqlite';
 import {fileURLToPath,pathToFileURL} from 'node:url';
+import {createRequire} from 'node:module';
 import ts from 'typescript';
 import nodemailer from 'nodemailer';
 import {runPiPrint} from '../connector/pi-print.mjs';
@@ -24,7 +25,7 @@ const CONTENT_TYPES={'.html':'text/html; charset=utf-8','.js':'text/javascript; 
 const sha256hex=(s)=>crypto.createHash('sha256').update(s).digest('hex');
 // D1 兼容封装：prepare→bind/first/all/run + batch 事务（与 tests/service.test.mjs 的 wrapper 同语义）。
 export function wrapD1(sqlite){const wrapper=(sql,params=[])=>({bind(...v){return wrapper(sql,v)},async first(){return sqlite.prepare(sql).get(...params)||null},async all(){return {results:sqlite.prepare(sql).all(...params)}},async run(){const r=sqlite.prepare(sql).run(...params);return {meta:{changes:r.changes}}}});return {prepare:wrapper,async batch(stmts){sqlite.exec('BEGIN');try{const out=[];for(const s of stmts)out.push(await s.run());sqlite.exec('COMMIT');return out;}catch(e){sqlite.exec('ROLLBACK');throw e}}};}
-export function createDb(dataDir){mkdirSync(dataDir,{recursive:true});const sqlite=new DatabaseSync(path.join(dataDir,'course-loop.sqlite'));sqlite.exec('PRAGMA foreign_keys=ON');return sqlite;}
+export function createDb(dataDir){mkdirSync(dataDir,{recursive:true});const sqlite=new DatabaseSync(path.join(dataDir,'course-loop.sqlite'));sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec('PRAGMA busy_timeout=10000');return sqlite;}
 // 幂等迁移：__migrations 记录已执行文件，按文件名顺序补执行 drizzle/*.sql。
 export async function migrate(sqlite,drizzleDir){sqlite.exec('CREATE TABLE IF NOT EXISTS __migrations(name TEXT PRIMARY KEY)');const done=new Set(sqlite.prepare('SELECT name FROM __migrations').all().map(r=>r.name));for(const f of (await fs.readdir(drizzleDir)).filter(f=>f.endsWith('.sql')).sort()){if(done.has(f))continue;sqlite.exec('BEGIN');try{sqlite.exec(await fs.readFile(path.join(drizzleDir,f),'utf8'));sqlite.prepare('INSERT INTO __migrations VALUES(?)').run(f);sqlite.exec('COMMIT');}catch(e){sqlite.exec('ROLLBACK');throw e}}}
 // FILES 本地目录实现：key 为 UUID，无路径风险。
@@ -38,7 +39,9 @@ export async function probePi(spec,{cwd,timeoutMs=60000}={}){try{const r=await r
 // lib/service.ts 是 TypeScript：启动时转译到数据目录缓存后 import（与 tests/service.test.mjs 同法）。
 // 读取 Pi 的模型目录（~/.pi/agent/models.json）：providers→models 映射；文件允许尾逗号（Pi 自身宽容解析）。
 export async function loadPiCatalog(homeDir){try{const raw=await fs.readFile(path.join(homeDir,'.pi','agent','models.json'),'utf8');const cleaned=raw.replace(/,\s*([}\]])/g,'$1');const d=JSON.parse(cleaned);const out=[];for(const [provider,p] of Object.entries(d.providers||{})){for(const m of p.models||[]){if(m?.id)out.push({provider,id:m.id,name:m.name||m.id});}}return out;}catch{return [];}}
-export async function loadApi(cacheDir){await fs.mkdir(cacheDir,{recursive:true});for(const name of ['domain','seed','xlsx','service']){let src=await fs.readFile(path.join(root,'lib',name+'.ts'),'utf8');src=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replaceAll("'./seed'","'./seed.mjs'").replaceAll("'./domain'","'./domain.mjs'").replaceAll("'./xlsx'","'./xlsx.mjs'");await fs.writeFile(path.join(cacheDir,name+'.mjs'),src);}return (await import(pathToFileURL(path.join(cacheDir,'service.mjs')).href+'?t='+Date.now())).api;}
+// 生成的模块会裸 import 'jszip'：在临时 dataDir（如测试）下往上找不到 node_modules 会 ERR_MODULE_NOT_FOUND，
+// 所以把裸包名换成解析好的绝对路径，使缓存目录位置不再影响依赖解析。
+export async function loadApi(cacheDir){await fs.mkdir(cacheDir,{recursive:true});const jszipUrl=pathToFileURL(createRequire(import.meta.url).resolve('jszip')).href;for(const name of ['domain','seed','xlsx','service']){let src=await fs.readFile(path.join(root,'lib',name+'.ts'),'utf8');src=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText.replaceAll("'./seed'","'./seed.mjs'").replaceAll("'./domain'","'./domain.mjs'").replaceAll("'./xlsx'","'./xlsx.mjs'").replaceAll("from 'jszip'",`from '${jszipUrl}'`);await fs.writeFile(path.join(cacheDir,name+'.mjs'),src);}return (await import(pathToFileURL(path.join(cacheDir,'service.mjs')).href+'?t='+Date.now())).api;}
 export async function startServer({port,host='0.0.0.0',dataDir=path.join(root,'data'),env=process.env,pathEnv,pollIntervalMs=2000,scanIntervalMs=60000,probeTimeoutMs=60000,clientDir=path.join(root,'dist','client'),serverEntry=path.join(root,'dist','server','index.js'),drizzleDir=path.join(root,'drizzle'),log=console.log}={}){
  port=port??Number(env.PORT||7100);
  mkdirSync(dataDir,{recursive:true});

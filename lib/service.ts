@@ -7,6 +7,73 @@ const email=(x:any)=>String(x||'').trim().toLowerCase();
 function need(v:any,m='没有访问权限',status=403):asserts v{if(!v)throw Object.assign(Error(m),{status});}
 function text(v:any,max=20000){need(typeof v==='string'&&v.trim().length>0&&v.length<=max,'文本为空或过长',400);return v.trim();}
 function reply(x:any,status=200,headers:any={}){return new Response(json(x),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...headers}});}
+// GitHub 项目巡检：手工触发一次，评估仓库的**全部**提交历史（不再按时间窗口切片）。
+// 配了 settings.github_token 走 REST API（5000 次/小时）；否则匿名 API（60 次/小时）/ commits.atom 兜底。
+const NL=String.fromCharCode(10);
+const COMMIT_PAGE_MAX=10; // 最多 10 页 × 100 条 = 1000 条，超出在摘要里标注截断
+// 学生常直接粘贴 clone 地址（结尾带 .git），GitHub API 不接受，这里统一去掉
+function parseRepo(url:string){
+ let u:URL;try{u=new URL(String(url||'').trim());}catch{return null;}
+ if(u.protocol!=='https:'||u.hostname.toLowerCase()!=='github.com')return null;
+ const seg=u.pathname.split('/').filter(Boolean);if(seg.length<2)return null;
+ const owner=seg[0];const name=seg[1].replace(/[.]git$/i,'');
+ return owner&&name?{owner,name}:null;
+}
+function digestText(owner:string,name:string,commits:any[],meta:any){
+ const day=(ms:number)=>new Date(ms).toISOString().slice(0,10);
+ const sorted=[...commits].sort((a,b)=>b.date-a.date);
+ const first=sorted.length?sorted[sorted.length-1].date:0;const last=sorted.length?sorted[0].date:0;
+ const spanDays=sorted.length?Math.max(1,Math.ceil((last-first)/86400000)+1):0;
+ const perDay=new Map<string,number>();for(const c of sorted){const k=day(c.date);perDay.set(k,(perDay.get(k)||0)+1);}
+ // 跨度过长时按天列出太长：超过 45 天按「周」聚合
+ const weekly=spanDays>45;
+ const buckets=new Map<string,number>();
+ for(const c of sorted){const d=new Date(c.date);const key=weekly?day(d.getTime()-((d.getDay()+6)%7)*86400000)+' 起那一周':day(c.date);buckets.set(key,(buckets.get(key)||0)+1);}
+ const authors=new Map<string,number>();for(const c of sorted){const a=c.author||'未知';authors.set(a,(authors.get(a)||0)+1);}
+ const truncated=!!meta?.truncated;
+ const head=[
+  '# GitHub 巡检摘要：'+owner+'/'+name,
+  '仓库创建：'+(meta?.created_at?day(Date.parse(meta.created_at)):'未知')+'；最近推送：'+(meta?.pushed_at?day(Date.parse(meta.pushed_at)):'未知')+'；默认分支：'+(meta?.default_branch||'未知'),
+  '评估范围：整个仓库历史（首次提交 '+(first?day(first):'—')+' ~ 最近提交 '+(last?day(last):'—')+'，跨 '+spanDays+' 天）',
+  '提交总数：'+sorted.length+(truncated?'（已截断：只取了最近的提交，更早历史未纳入）':'')+'；有提交的天数：'+perDay.size+'/'+spanDays,
+  '提交者（姓名 / 提交数）：'+(authors.size?[...authors.entries()].sort((a,b)=>b[1]-a[1]).map(([a,n])=>a+' '+n).join('、'):'（无）'),
+  '',
+  '## '+(weekly?'按周':'按天')+'提交分布','',
+  ...(buckets.size?[...buckets.entries()].sort().map(([k,n])=>'- '+k+'：'+n+' 次'):['- 仓库内没有任何提交']),
+  '','## 提交明细（新→旧，最多 150 条）','',
+  ...(sorted.length?sorted.slice(0,150).map(c=>'- '+new Date(c.date).toISOString().slice(0,16).replace('T',' ')+' '+c.sha+' '+(c.author||'未知')+'：'+c.message):['- （无）'])
+ ];
+ return head.join(NL).slice(0,20000);
+}
+async function repoCommits(url:string,token:string){
+ const repo=parseRepo(url);need(repo,'仓库地址无效（需 https://github.com/owner/repo）',400);const {owner,name}=repo;
+ const headers:any={Accept:'application/vnd.github+json','User-Agent':'course-loop',...(token?{Authorization:'Bearer '+token}:{})};
+ const meta:any={};
+ try{const mr=await fetch('https://api.github.com/repos/'+owner+'/'+name,{headers});if(mr.ok){const m:any=await mr.json();meta.created_at=m?.created_at||null;meta.pushed_at=m?.pushed_at||null;meta.default_branch=m?.default_branch||null;}}catch{}
+ const commits:any[]=[];let truncated=false;
+ try{
+  for(let page=1;page<=COMMIT_PAGE_MAX;page++){
+   const r=await fetch('https://api.github.com/repos/'+owner+'/'+name+'/commits?per_page=100&page='+page,{headers});
+   if(!r.ok){if(page===1)throw Error('GitHub API '+r.status+(r.status===409?'（仓库为空）':(r.status===403||r.status===429)?'（已限流，建议配置 github_token）':''));truncated=true;break;}
+   const arr:any=await r.json();if(!Array.isArray(arr)||!arr.length)break;
+   for(const c of arr)commits.push({sha:String(c?.sha||'').slice(0,7),date:Date.parse(c?.commit?.author?.date||'')||0,author:c?.commit?.author?.name||c?.author?.login||'',message:String(c?.commit?.message||'').split(NL)[0].slice(0,120)});
+   if(arr.length<100)break;
+   if(page===COMMIT_PAGE_MAX)truncated=true;
+  }
+  meta.truncated=truncated;
+  return {owner,name,commits:commits.filter(c=>c.date>0),meta};
+ }catch(apiErr:any){
+  // 兜底：commits.atom 免凭据、无频率限制，但只给最近 20 条
+  try{
+   const r=await fetch('https://github.com/'+owner+'/'+name+'/commits.atom',{headers:{'User-Agent':'course-loop'}});
+   if(!r.ok)throw Error('atom '+r.status);
+   const xml=await r.text();
+   const list=[...xml.matchAll(/<entry>([^]*?)<[/]entry>/g)].slice(0,20).map(m=>{const e=m[1];const t=((e.match(/<title>([^]*?)<[/]title>/)||[])[1]||'').replace(/<[^>]+>/g,'').trim();const sha=((e.match(/commit[/]([0-9a-f]{7,40})/)||[])[1]||'').slice(0,7);return {sha,date:Date.parse((e.match(/<updated>([^<]+)</)||[])[1]||'')||0,author:((e.match(/<name>([^<]+)</)||[])[1]||'').trim(),message:t.slice(0,120)};});
+   if(!list.length)throw Error('atom 无条目');
+   return {owner,name,commits:list.filter(c=>c.date>0),meta:{...meta,truncated:true}};
+  }catch{throw Error(String(apiErr?.message||apiErr).slice(0,200));}
+ }
+}
 const ASSIST_GUIDE=`你是「小课」，课序平台的使用助手。用简洁中文回答，不知道就诚实说并建议联系教师或课程管理员，绝不编造平台功能。用户提改进意见时，感谢并引导对方点击面板上的「提改进意见」按钮记录，课程负责人会定期查阅。
 
 平台使用指南：
@@ -36,6 +103,38 @@ export async function api(req:Request,env:Platform){
   if(!f.classId)need(f.owner===u.id||u.role==='admin'||(f.visibility==='student'&&await one('SELECT 1 FROM classes k LEFT JOIN enrollments e ON e.classId=k.id AND e.userId=? WHERE k.courseId=? AND (k.owner=? OR e.userId IS NOT NULL)',u.id,f.courseId,u.id))); // 课程素材：上传者、admin，或共享后该课程任一课堂的师生
   else need(f.owner===u.id||u.role==='admin'||(f.teamId&&await one('SELECT 1 FROM members WHERE teamId=? AND userId=?',f.teamId,u.id))||await one('SELECT 1 FROM classes WHERE id=? AND owner=?',f.classId,u.id)); // 课堂/小组文件：上传者、组员、课堂教师、admin
   return f;}
+ // GitHub 项目巡检（手工触发）：为指定课堂/实验下已填仓库的小组，各生成一条巡检记录与一条 repo-scan 任务。
+ // 一次触发评估的是仓库的全部提交历史；正在评分中的小组会跳过，避免重复花钱。
+ async function runRepoScans(actor:string,{classId=null,experimentId=null,teamId=null}:any={}){
+  const out:any={scanned:0,skipped:0,failed:[] as string[],teams:0,at:now()};
+  if(!classId||!experimentId)return out;
+  const token=(await one("SELECT value FROM settings WHERE key='github_token'"))?.value||'';
+  const k=await one('SELECT * FROM classes WHERE id=?',String(classId));if(!k)return out;
+  const c=await one('SELECT * FROM courses WHERE id=?',k.courseId);if(!c?.publishedId)return out;
+  const r=await one('SELECT * FROM releases WHERE id=?',c.publishedId);if(!r)return out;
+  const exp=parse(r.content).experiments.find((e:any)=>e.id===String(experimentId));if(!exp||exp.grading!=='repo')return out;
+  const repoTeams=await all("SELECT * FROM teams WHERE classId=? AND repo<>'' ORDER BY name",k.id);
+  const teams=teamId?repoTeams.filter((t:any)=>t.id===String(teamId)):repoTeams;
+  out.teams=teams.length;
+  for(const t of teams){
+   const pending=await one("SELECT 1 FROM submissions s JOIN jobs j ON j.id=s.jobId WHERE s.teamId=? AND s.experimentId=? AND s.mode='scan' AND j.status IN ('queued','running')",t.id,exp.id);
+   if(pending){out.skipped++;continue;}
+   let got:any;
+   try{got=await repoCommits(t.repo,token);}
+   catch(e:any){out.failed.push(k.name+' / '+t.name+'：'+String(e?.message||e).slice(0,140));continue;}
+   const digest=digestText(got.owner,got.name,got.commits,got.meta);
+   const last=await one("SELECT MAX(ordinal) n FROM submissions WHERE classId=? AND teamId=? AND experimentId=? AND mode='scan'",k.id,t.id,exp.id);
+   const ordinal=(last?.n||0)+1;
+   const mem=await all('SELECT users.id,users.name,users.email FROM members JOIN users ON members.userId=users.id WHERE members.teamId=? ORDER BY members.slot',t.id);
+   const sid=id();
+   const note='[GitHub 项目巡检] '+t.name+' 的仓库 '+t.repo+'；本次评估仓库全部提交历史（共 '+got.commits.length+' 条记录'+(got.meta?.truncated?'，历史较长已截断':'')+'）。无学生上传文件，评分依据为任务里的提交记录摘要。';
+   const job=enqueue(actor,'repo-scan',{submissionId:sid,releaseId:r.id,revision:r.revision,experiment:exp,fileIds:[],note,members:mem,discount:0,repo:t.repo,repoDigest:digest,repoMeta:got.meta||{},scope:'full-history'},k.courseId,k.id,t.id);
+   await db.batch([job.statement,stmt('INSERT INTO submissions(id,classId,teamId,studentId,experimentId,releaseId,mode,ordinal,members,fileIds,note,makeup,jobId,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',sid,k.id,t.id,null,exp.id,r.id,'scan',ordinal,json(mem),'[]',note,0,job.id,now())]);
+   out.scanned++;
+  }
+  if(out.scanned||out.failed.length)await record(actor,'repo.scan',k.id,{experimentId:exp.id,scanned:out.scanned,skipped:out.skipped,teams:out.teams,failed:out.failed.slice(0,10)}).run();
+  return out;
+ }
  const classCard=(x:any)=>({id:x.id,courseId:x.courseId,courseTitle:x.courseTitle,term:x.term,name:x.name,joinCode:x.joinCode,maxSize:x.maxSize,deadline:x.deadline,autoPublish:x.autoPublish,created:x.created});
  async function classDetail(k:any,u:any,tv:boolean){ // tv: 课堂教师（或 admin）视角
   const c=await one('SELECT * FROM courses WHERE id=?',k.courseId);const release=c.publishedId?await one('SELECT * FROM releases WHERE id=?',c.publishedId):null;
@@ -43,7 +142,9 @@ export async function api(req:Request,env:Platform){
   const ts=tv?await all('SELECT * FROM teams WHERE classId=?',k.id):my?[my]:[];for(const t of ts)t.members=await all('SELECT users.id,users.name,users.email,users.studentNo FROM members JOIN users ON members.userId=users.id WHERE members.teamId=? ORDER BY members.slot',t.id);
   const inv=tv?[]:await all('SELECT invites.*,teams.name as teamName FROM invites JOIN teams ON invites.teamId=teams.id WHERE teams.classId=? AND (invites.email=? OR teams.leader=?)',k.id,u.email,u.id);
   const subs=tv?await all('SELECT submissions.*,teams.name as teamName,jobs.status,jobs.error,grades.report,grades.published FROM submissions LEFT JOIN teams ON submissions.teamId=teams.id JOIN jobs ON submissions.jobId=jobs.id LEFT JOIN grades ON grades.submissionId=submissions.id WHERE submissions.classId=? ORDER BY submissions.created DESC',k.id):await all('SELECT submissions.*,teams.name as teamName,jobs.status,jobs.error,grades.report,grades.published FROM submissions LEFT JOIN teams ON submissions.teamId=teams.id JOIN jobs ON submissions.jobId=jobs.id LEFT JOIN grades ON grades.submissionId=submissions.id WHERE submissions.classId=? AND (submissions.teamId=? OR submissions.studentId=?) ORDER BY submissions.created DESC',k.id,my?.id||'',u.id);
-  const ownerOf=(x:any)=>x.teamId||x.studentId;const bestOf=new Map();for(const x of subs){if(!x.report)continue;const tot=parse(x.report)?.total;if(!Number.isFinite(tot))continue;const key=x.experimentId+'|'+ownerOf(x);const b=bestOf.get(key);if(!b||tot>b.tot||(tot===b.tot&&x.ordinal>b.ordinal))bestOf.set(key,{id:x.id,tot,ordinal:x.ordinal});}
+  const ownerOf=(x:any)=>x.teamId||x.studentId;const bestOf=new Map();// 巡检类实验（grading='repo'）按「最近一次巡检」计成绩：持续开发看的是当前状态，早期高分不该锁死
+const repoExps=new Set(((release?parse(release.content).experiments:[])||[]).filter((e:any)=>e.grading==='repo').map((e:any)=>e.id));
+ for(const x of subs){if(!x.report)continue;const tot=parse(x.report)?.total;if(!Number.isFinite(tot))continue;const key=x.experimentId+'|'+ownerOf(x);const b=bestOf.get(key);const fresh=repoExps.has(x.experimentId)?(!b||x.ordinal>b.ordinal):(!b||tot>b.tot||(tot===b.tot&&x.ordinal>b.ordinal));if(fresh)bestOf.set(key,{id:x.id,tot,ordinal:x.ordinal});}
   for(const s of subs){s.superseded=subs.some((x:any)=>ownerOf(x)===ownerOf(s)&&x.experimentId===s.experimentId&&x.ordinal>s.ordinal);s.isBest=bestOf.get(s.experimentId+'|'+ownerOf(s))?.id===s.id;s.members=parse(s.members,[]);s.fileIds=parse(s.fileIds,[]);s.reviewPending=!tv&&!s.published&&!!s.report&&s.status==='complete';s.report=(tv||s.published)?parse(s.report):null;}
   const fs=tv?await all('SELECT id,owner,name,type,size,visibility,created,teamId,classId FROM files WHERE classId=? OR (courseId=? AND classId IS NULL AND visibility=\'student\') ORDER BY created DESC',k.id,k.courseId):await all('SELECT id,owner,name,type,size,visibility,created,teamId,classId FROM files WHERE (classId=? AND (owner=? OR teamId=?)) OR (courseId=? AND classId IS NULL AND visibility=\'student\') ORDER BY created DESC',k.id,u.id,my?.id||'',k.courseId);
   const mkOwn=await all('SELECT * FROM makeups WHERE classId=?',k.id);const makeups=mkOwn.length?mkOwn:(c.primaryClassId?await all('SELECT * FROM makeups WHERE classId=?',c.primaryClassId):[]);
@@ -89,7 +190,7 @@ export async function api(req:Request,env:Platform){
   // Connector calls use a separate bearer capability, never a student session.
   if(path.startsWith('connector/')){
    const secret=req.headers.get('authorization')?.replace(/^Bearer /,'')||'';const stored=await one('SELECT value FROM settings WHERE key=\'connector_token\'');need(stored&&stored.value===await hash(secret),'连接器凭据无效',401);
-   if(path==='connector/poll'&&method==='POST'){const b:any=await req.json();const h=parse((await one("SELECT value FROM settings WHERE key='connector_health'"))?.value,{});await run('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','connector_health',json({...h,...(b.acp?{acpAt:now()}:{}),...(b.mail?{mailAt:now()}: {})}));await run('UPDATE jobs SET status=\'failed\',error=\'连接器任务超时，请重试\',finished=? WHERE status=\'running\' AND expires<?',now(),now());const kinds=[...(b.acp?['draft','grade']:[]),...(b.mail?['email']:[])];if(!kinds.length)return reply({job:null});const lease=id();const job=await stmt(`UPDATE jobs SET status='running',lease=?,expires=?,attempts=attempts+1 WHERE id=(SELECT id FROM jobs WHERE status='queued' AND kind IN (${kinds.map(()=>'?').join(',')}) ORDER BY created LIMIT 1) AND status='queued' RETURNING *`,lease,now()+900000,...kinds).first();if(!job)return reply({job:null});const payload=parse(job.payload,{});const fids=payload.fileIds||[];const attachments=[];for(const fid of fids){const f=await one('SELECT id,name,type,size FROM files WHERE id=? AND courseId=?',fid,job.courseId);if(f)attachments.push(f);}return reply({job:{...job,payload,files:attachments}});}
+   if(path==='connector/poll'&&method==='POST'){const b:any=await req.json();const h=parse((await one("SELECT value FROM settings WHERE key='connector_health'"))?.value,{});await run('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','connector_health',json({...h,...(b.acp?{acpAt:now()}:{}),...(b.mail?{mailAt:now()}: {})}));await run('UPDATE jobs SET status=\'failed\',error=\'连接器任务超时，请重试\',finished=? WHERE status=\'running\' AND expires<?',now(),now());const kinds=[...(b.acp?['draft','grade','repo-scan']:[]),...(b.mail?['email']:[])];if(!kinds.length)return reply({job:null});const lease=id();const job=await stmt(`UPDATE jobs SET status='running',lease=?,expires=?,attempts=attempts+1 WHERE id=(SELECT id FROM jobs WHERE status='queued' AND kind IN (${kinds.map(()=>'?').join(',')}) ORDER BY created LIMIT 1) AND status='queued' RETURNING *`,lease,now()+900000,...kinds).first();if(!job)return reply({job:null});const payload=parse(job.payload,{});const fids=payload.fileIds||[];const attachments=[];for(const fid of fids){const f=await one('SELECT id,name,type,size FROM files WHERE id=? AND courseId=?',fid,job.courseId);if(f)attachments.push(f);}return reply({job:{...job,payload,files:attachments}});}
    const parts=path.split('/');const jid=parts[2];const j=await one('SELECT * FROM jobs WHERE id=?',jid);need(j,'任务不存在',404);const lease=req.headers.get('x-job-lease');need(j.lease===lease&&j.status==='running'&&j.expires>now(),'任务租约已失效',409);
    if(parts[1]==='file'){const fid=parts[3];need(parse(j.payload,{}).fileIds?.includes(fid),'文件不属于任务');const f=await one('SELECT * FROM files WHERE id=?',fid);const obj=await env.FILES.get(f.key);need(obj,'文件不存在',404);return new Response(obj.body,{headers:{'Content-Type':'application/octet-stream'}});}
    if(parts[1]==='heartbeat'){await run('UPDATE jobs SET expires=? WHERE id=?',now()+900000,j.id);const h=parse((await one("SELECT value FROM settings WHERE key='connector_health'"))?.value,{});await run("UPDATE settings SET value=? WHERE key='connector_health'",json({...h,[j.kind==='email'?'mailAt':'acpAt']:now()}));return reply({ok:true});}
@@ -97,7 +198,7 @@ export async function api(req:Request,env:Platform){
     const b:any=await req.json();const p=parse(j.payload,{});if(b.error){await run('UPDATE jobs SET status=\'failed\',error=?,finished=? WHERE id=? AND lease=?',String(b.error).slice(0,2000),now(),j.id,lease);return reply({ok:true});}
     const mutations=[];let result=b.result;
     if(j.kind==='draft'){const d=validateDraft(result.draft);const c=await one('SELECT * FROM courses WHERE id=?',j.courseId);need(c.revision===p.revision,'课程已变化，请重新发起分析',409);mutations.push(stmt('UPDATE courses SET draft=?,title=?,term=?,revision=revision+1 WHERE id=? AND revision=?',json(d),d.title,d.term||c.term,c.id,p.revision),stmt('INSERT INTO messages VALUES(?,?,?,?,?,?)',j.id,c.id,'assistant',text(result.message||'课程草案已更新，请预览后确认发布。'),json([]),now()));}
-    if(j.kind==='grade'){result=validateAssessment(result,p.experiment);const disc=Number(p.discount)||0;if(disc>0&&disc<=90){const k=1-disc/100;for(const it of result.items)it.score=Math.round(it.score*k*100)/100;result.total=Math.round(result.items.reduce((n:number,x:any)=>n+x.score,0)*100)/100;result.makeup={discount:disc};}const s=await one('SELECT * FROM submissions WHERE jobId=?',j.id);mutations.push(stmt('INSERT INTO grades VALUES(?,?,?,?) ON CONFLICT(submissionId) DO UPDATE SET report=excluded.report,published=excluded.published,updated=excluded.updated',s.id,json(result),1,now()));}
+    if(j.kind==='grade'||j.kind==='repo-scan'){result=validateAssessment(result,p.experiment);const disc=Number(p.discount)||0;if(disc>0&&disc<=90){const k=1-disc/100;for(const it of result.items)it.score=Math.round(it.score*k*100)/100;result.total=Math.round(result.items.reduce((n:number,x:any)=>n+x.score,0)*100)/100;result.makeup={discount:disc};}const s=await one('SELECT * FROM submissions WHERE jobId=?',j.id);mutations.push(stmt('INSERT INTO grades VALUES(?,?,?,?) ON CONFLICT(submissionId) DO UPDATE SET report=excluded.report,published=excluded.published,updated=excluded.updated',s.id,json(result),1,now()));}
     if(j.kind==='email'){result={delivered:true};mutations.push(stmt('UPDATE jobs SET payload=? WHERE id=?',json({delivered:true}),j.id));}
     mutations.push(stmt('UPDATE jobs SET status=\'complete\',result=?,error=NULL,finished=? WHERE id=? AND lease=? AND status=\'running\'',json(result),now(),j.id,lease));await db.batch(mutations);return reply({ok:true});
    }return reply({error:'连接器操作不存在'},404);
@@ -157,13 +258,14 @@ export async function api(req:Request,env:Platform){
    }
    const rel=c.publishedId?await one('SELECT * FROM releases WHERE id=?',c.publishedId):null;const d=rel?parse(rel.content):parse(c.draft);const exps=(d.experiments||[]).filter((e:any)=>e.grading!=='none');
    const mems=await all('SELECT teamId,userId FROM members WHERE classId=?',k.id);
-   const subs=await all('SELECT s.teamId,s.studentId,s.experimentId,g.report FROM submissions s LEFT JOIN grades g ON g.submissionId=s.id WHERE s.classId=?',k.id);
-   const cnt:Map<string,number>=new Map(),best:Map<string,number>=new Map();for(const s of subs){const owner=s.teamId||s.studentId;if(!owner)continue;const kk=owner+'|'+s.experimentId;cnt.set(kk,(cnt.get(kk)||0)+1);const rep=s.report?parse(s.report):null;const tot=rep&&Number.isFinite(rep.total)?rep.total:null;const prev=best.get(kk);if(tot!==null&&(prev===undefined||tot>prev))best.set(kk,tot);}
-   const header=['课堂','课程','团队','成员姓名','学号','邮箱','角色','GitHub 仓库','团队人数',...exps.flatMap((e:any)=>[e.title+' 提交次数',e.title+' 最高分']),'已提交实验数','总评'];
+   const subs=await all('SELECT s.teamId,s.studentId,s.experimentId,s.mode,s.ordinal,g.report FROM submissions s LEFT JOIN grades g ON g.submissionId=s.id WHERE s.classId=?',k.id);
+   const cnt:Map<string,number>=new Map(),scanCnt:Map<string,number>=new Map(),best:Map<string,{tot:number,ordinal:number}>=new Map();for(const s of subs){const owner=s.teamId||s.studentId;if(!owner)continue;const kk=owner+'|'+s.experimentId;if(s.mode==='scan')scanCnt.set(kk,(scanCnt.get(kk)||0)+1);else cnt.set(kk,(cnt.get(kk)||0)+1);const rep=s.report?parse(s.report):null;const tot=rep&&Number.isFinite(rep.total)?rep.total:null;const prev=best.get(kk);// 巡检类实验取「最近一次巡检」，其余实验仍取最高分
+const repoExp=exps.some((e:any)=>e.id===s.experimentId&&e.grading==='repo');if(tot!==null&&(prev===undefined||(repoExp?s.ordinal>prev.ordinal:tot>prev.tot)))best.set(kk,{tot,ordinal:s.ordinal||0});}
+   const header=['课堂','课程','团队','成员姓名','学号','邮箱','角色','GitHub 仓库','团队人数',...exps.flatMap((e:any)=>[e.title+(e.grading==='repo'?' 巡检次数':' 提交次数'),e.title+' 最高分']),'已提交实验数','总评'];
    const rows:any[][]=[header];
    for(const r of roster){const t=r.teamId?teams.find((x:any)=>x.id===r.teamId):null;const size=t?mems.filter((m:any)=>m.teamId===t.id).length:null;
     const row:any[]=[k.name,c.title,t?t.name:'（未分组）',r.name,r.studentNo,r.email,t?(t.leader===r.id?'组长':'成员'):'',t?t.repo:'',size===null?'':String(size)];
-    let sum=0,submitted=0;for(const e of exps){const owner=e.grading==='individual'?r.id:(t?t.id:null);const kk=owner?owner+'|'+e.id:'';const n=kk?(cnt.get(kk)||0):0;const b=kk&&best.has(kk)?best.get(kk)!:null;row.push(String(n),b===null?'':String(b));if(n>0)submitted++;sum+=b===null?0:b;}
+    let sum=0,submitted=0;for(const e of exps){const owner=e.grading==='individual'?r.id:(t?t.id:null);const kk=owner?owner+'|'+e.id:'';const n=kk?((e.grading==='repo'?scanCnt:cnt).get(kk)||0):0;const b=kk&&best.has(kk)?best.get(kk)!.tot:null;row.push(String(n),b===null?'':String(b));if(n>0||b!==null)submitted++;sum+=b===null?0:b;}
     row.push(String(submitted),exps.length?(Math.round(sum/exps.length*10)/10).toFixed(1):'');rows.push(row);}
    return csvOf(rows,'名单');}
   if(path==='course-import'&&method==='POST'){need(u.role==='admin'||u.role==='teacher','仅教师可导入课程',403);const b:any=await req.json();const raw=b.course;need(raw&&typeof raw==='object','课程数据无效',400);let d:any;if(Array.isArray(raw.experiments)&&raw.experiments.length)d=validateDraft(raw);else{need(typeof raw.title==='string'&&raw.title.trim(),'课程数据缺少标题或实验',400);d={title:text(raw.title,160),term:String(raw.term||'').slice(0,100),description:String(raw.description||'').slice(0,20000),experiments:[],questions:[]};}if(b.title)d.title=text(b.title,160);const cid=id();await run('INSERT INTO courses(id,owner,title,term,draft,created) VALUES(?,?,?,?,?,?)',cid,u.id,d.title,d.term,json(d),now());await record(u.id,'course.import',cid,{title:d.title}).run();return reply({id:cid});}
@@ -174,6 +276,34 @@ export async function api(req:Request,env:Platform){
    need(start!==null&&end!==null&&Number.isFinite(start)&&Number.isFinite(end),'请设置补交起止时间',400);need(start<end,'补交开始时间必须早于结束时间',400);need(Number.isInteger(disc)&&(disc as number)>=1&&(disc as number)<=90,'折扣应为 1–90 的整数百分比',400);
    await run('DELETE FROM makeups WHERE classId=?',k.id);
    await run('INSERT INTO makeups(courseId,experimentId,classId,start,end,discount,updated) VALUES(?,?,?,?,?,?,?)',k.courseId,'',k.id,start,end,disc,now());await record(u.id,'makeup.set',k.id,{start,end,discount:disc}).run();return reply({ok:true});}
+  // 手工补交：教师代指定学生（个人判分）或该生所在小组（小组判分）补交指定实验，折扣固定 20%，与学生自助补交窗口无关
+  if(path==='makeup-submit'&&method==='POST'){const b:any=await req.json();const k=await cls(String(b.classId||''),u,true);const c=await one('SELECT * FROM courses WHERE id=?',k.courseId);need(c.publishedId,'课程尚未发布',400);
+   const r=await one('SELECT * FROM releases WHERE id=?',c.publishedId);const exp=parse(r.content).experiments.find((e:any)=>e.id===String(b.experimentId||''));need(exp,'实验不存在',400);need(exp.grading!=='none','该实验无需提交，不计成绩',400);need(exp.grading!=='repo','该实验由平台每日巡检评分，无需提交',400);
+   const st=await one('SELECT users.* FROM enrollments JOIN users ON users.id=enrollments.userId WHERE enrollments.classId=? AND enrollments.userId=?',k.id,String(b.studentId||''));need(st,'该学生不在本课堂',400);
+   const fids=Array.isArray(b.fileIds)?b.fileIds.slice(0,20):[];need(fids.length,'请先上传要代交的作业文件',400);
+   const individual=exp.grading==='individual';let t:any=null;let mem:any[]=[];
+   if(individual)mem=[{id:st.id,name:st.name,email:st.email}];
+   else{t=await one('SELECT teams.* FROM teams JOIN members ON members.teamId=teams.id WHERE teams.classId=? AND members.userId=?',k.id,st.id);need(t,'该学生尚未加入小组，无法代表小组补交',400);mem=await all('SELECT users.id,users.name,users.email FROM members JOIN users ON members.userId=users.id WHERE members.teamId=? ORDER BY members.slot',t.id);}
+   for(const fid of fids){const f=await one('SELECT * FROM files WHERE id=?',fid);need(f,'文件不存在',404);need(f.classId===k.id,'文件不属于本课堂',400);need(f.owner===u.id||u.role==='admin'||(individual?f.owner===st.id:f.teamId===t.id),'只能使用本课堂的作业文件',403);}
+   const ownerCol=individual?'studentId':'teamId';const ownerVal=individual?st.id:t.id;const last=await one(`SELECT MAX(ordinal) as n FROM submissions WHERE ${ownerCol}=? AND experimentId=? AND mode<>'scan'`,ownerVal,exp.id);const ordinal=(last?.n||0)+1;
+   const discount=20;const note='[教师手工补交] '+(String(b.note||'').trim().slice(0,19900)||'教师为该学生安排的课后补交，评分依据为教师上传的作业文件。');
+   const sid=id();const job=enqueue(u.id,'grade',{submissionId:sid,releaseId:r.id,revision:r.revision,experiment:exp,fileIds:fids,note,members:mem,discount},k.courseId,k.id,t?.id||null);
+   await db.batch([job.statement,stmt('INSERT INTO submissions(id,classId,teamId,studentId,experimentId,releaseId,mode,ordinal,members,fileIds,note,makeup,jobId,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',sid,k.id,t?.id||null,individual?st.id:null,exp.id,r.id,'formal',ordinal,json(mem),json(fids),note,discount,job.id,now()),record(u.id,'makeup.submit',sid,{classId:k.id,studentId:st.id,experimentId:exp.id,ordinal,discount})]);
+   return reply({id:sid,ordinal,discount,teamId:t?.id||null});}
+  // 手工巡检：教师/管理员触发一次，立即为已填仓库的小组各建一条任务（评估整仓历史；进行中的小组跳过）
+  if(path==='repo-scan-now'&&method==='POST'){const b:any=await req.json();const k=await cls(String(b.classId||''),u,true);const r=await runRepoScans(u.id,{classId:k.id,experimentId:b.experimentId?String(b.experimentId):null,teamId:b.teamId?String(b.teamId):null,force:true});return reply(r);}
+  // 课堂只能在自己负责的课程之间改绑；已有人/组/提交/文件的课堂一律拒绝，避免带走教学记录
+  const classEmpty=async(k:any)=>{const n=await one('SELECT (SELECT COUNT(*) FROM enrollments WHERE classId=?) e,(SELECT COUNT(*) FROM teams WHERE classId=?) t,(SELECT COUNT(*) FROM submissions WHERE classId=?) s,(SELECT COUNT(*) FROM files WHERE classId=?) f',k.id,k.id,k.id,k.id);return !n.e&&!n.t&&!n.s&&!n.f;};
+  if(path==='class-rebind'&&method==='POST'){const b:any=await req.json();const k=await one('SELECT * FROM classes WHERE id=?',String(b.classId||''));need(k,'课堂不存在',404);need(k.owner===u.id||u.role==='admin','只有本课堂教师可以更换课程',403);
+   const c=await one('SELECT * FROM courses WHERE id=?',String(b.courseId||''));need(c,'课程不存在',404);need(c.owner===u.id||u.role==='admin','只能换到自己负责的课程',403);need(c.id!==k.courseId,'课堂已经在这门课程下',409);
+   need(await classEmpty(k),'课堂已有学生/小组/提交，不能更换课程；请另开一个新课堂',409);
+   await db.batch([stmt('DELETE FROM makeups WHERE classId=?',k.id),stmt('UPDATE classes SET courseId=? WHERE id=?',c.id,k.id),record(u.id,'class.rebind',k.id,{from:k.courseId,to:c.id})]);
+   return reply({ok:true,courseId:c.id});}
+  // 删除课堂：同样只允许空课堂（学生/小组/提交/文件任一存在就拒绝）
+  if(path==='class-delete'&&method==='POST'){const b:any=await req.json();const k=await one('SELECT * FROM classes WHERE id=?',String(b.classId||''));need(k,'课堂不存在',404);need(k.owner===u.id||u.role==='admin','只有本课堂教师可以删除课堂',403);
+   need(await classEmpty(k),'课堂已有学生/小组/提交，不能删除',409);
+   await db.batch([stmt('DELETE FROM makeups WHERE classId=?',k.id),stmt('DELETE FROM jobs WHERE classId=?',k.id),stmt('DELETE FROM invites WHERE teamId IN (SELECT id FROM teams WHERE classId=?)',k.id),stmt('UPDATE courses SET primaryClassId=NULL WHERE primaryClassId=?',k.id),stmt('DELETE FROM classes WHERE id=?',k.id),record(u.id,'class.delete',k.id,{name:k.name,courseId:k.courseId})]);
+   return reply({ok:true});}
   if(path==='classes'&&method==='POST'){need(u.role==='teacher');const b:any=await req.json();const c=await one('SELECT * FROM courses WHERE id=?',String(b.courseId||''));need(c,'课程不存在',404);const name=b.name?text(b.name,60):'未命名课堂';const kid=id();let code='';for(let i=0;i<5;i++){code=id().replaceAll('-','').slice(0,10).toUpperCase();if(!await one('SELECT 1 FROM classes WHERE joinCode=?',code))break;}await run('INSERT INTO classes(id,courseId,owner,name,joinCode,created) VALUES(?,?,?,?,?,?)',kid,c.id,u.id,name,code,now());return reply({id:kid,joinCode:code});}
   if(path==='join'&&method==='POST'){need(u.role==='student');const b:any=await req.json();const k=await one('SELECT * FROM classes WHERE joinCode=?',String(b.code||'').trim().toUpperCase());need(k,'课堂邀请码无效',400);await run('INSERT OR IGNORE INTO enrollments VALUES(?,?)',k.id,u.id);return reply({id:k.id});}
   if(path==='pair'&&method==='POST'){need(u.role==='admin');const token=id()+id();await run('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','connector_token',await hash(token));await record(u.id,'connector.rotate','connector',{}).run();return reply({token});}
@@ -194,10 +324,10 @@ export async function api(req:Request,env:Platform){
   if(path==='team-repo'&&method==='POST'){const b:any=await req.json();const {t}=await team(b.teamId,u);let repo=String(b.repo||'').trim();need(repo===''||/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo),'请输入 GitHub 仓库地址，例如 https://github.com/owner/repo',400);repo=repo.replace(/\/+$/,'');await run('UPDATE teams SET repo=? WHERE id=?',repo,t.id);await record(u.id,'team.repo',t.id,{repo}).run();return reply({ok:true});}
   if(path==='submit'&&method==='POST'){const b:any=await req.json();need(Array.isArray(b.fileIds)&&b.fileIds.length>0&&b.fileIds.length<=20,'请上传作业材料',400);const fs:any[]=[];for(const fid of b.fileIds)fs.push(await accessibleFile(fid,u));const kid=fs[0].classId;need(kid&&fs.every((f:any)=>f.classId===kid),'文件不属于同一课堂',400);const k=await one('SELECT * FROM classes WHERE id=?',kid);need(k,'课堂不存在',404);need(await one('SELECT 1 FROM enrollments WHERE classId=? AND userId=?',kid,u.id),'你不在本课堂中',403);const c=await one('SELECT * FROM courses WHERE id=?',k.courseId);need(c.publishedId,'课程尚未发布',400);const pc=c.primaryClassId?await one('SELECT deadline FROM classes WHERE id=?',c.primaryClassId):null;const dl=pc?pc.deadline:k.deadline;let mk=await one("SELECT * FROM makeups WHERE classId=? AND experimentId IN ('', ?) ORDER BY experimentId='' DESC LIMIT 1",k.id,b.experimentId);
    // 截止时间继承主课堂，补交窗口同样沿用主课堂（本课堂单独设置优先）
-   if(!mk&&c.primaryClassId&&c.primaryClassId!==k.id)mk=await one("SELECT * FROM makeups WHERE classId=? AND experimentId IN ('', ?) ORDER BY experimentId='' DESC LIMIT 1",c.primaryClassId,b.experimentId);let makeup=0;if(dl&&now()>dl){need(mk&&now()>=mk.start&&now()<=mk.end,mk?(now()<mk.start?'已超过截止时间，补交尚未开始':'已超过截止时间，补交已结束'):'已超过截止时间',400);makeup=1;}const r=await one('SELECT * FROM releases WHERE id=?',c.publishedId);const exp=parse(r.content).experiments.find((e:any)=>e.id===b.experimentId);need(exp,'实验不存在',400);need(exp.grading!=='none','该实验无需提交，不计成绩',400);const individual=exp.grading==='individual';let t:any=null,mem:any[];
+   if(!mk&&c.primaryClassId&&c.primaryClassId!==k.id)mk=await one("SELECT * FROM makeups WHERE classId=? AND experimentId IN ('', ?) ORDER BY experimentId='' DESC LIMIT 1",c.primaryClassId,b.experimentId);let makeup=0;if(dl&&now()>dl){need(mk&&now()>=mk.start&&now()<=mk.end,mk?(now()<mk.start?'已超过截止时间，补交尚未开始':'已超过截止时间，补交已结束'):'已超过截止时间',400);makeup=1;}const r=await one('SELECT * FROM releases WHERE id=?',c.publishedId);const exp=parse(r.content).experiments.find((e:any)=>e.id===b.experimentId);need(exp,'实验不存在',400);need(exp.grading!=='none','该实验无需提交，不计成绩',400);need(exp.grading!=='repo','该实验由平台每日巡检评分，无需提交',400);const individual=exp.grading==='individual';let t:any=null,mem:any[];
    if(individual){for(const f of fs)need(f.owner===u.id,'文件不属于本人',403);mem=[{id:u.id,name:u.name,email:u.email}];}
    else{t=await one('SELECT teams.* FROM teams JOIN members ON teams.id=members.teamId WHERE members.userId=? AND members.classId=?',u.id,k.id);need(t,'请先加入本课堂的小组',400);need(t.leader===u.id,'由组长代表小组提交');for(const f of fs)need(f.teamId===t.id,'文件不属于本组',403);mem=await all('SELECT users.id,users.name,users.email FROM members JOIN users ON members.userId=users.id WHERE members.teamId=?',t.id);}
-   const ownerCol=individual?'studentId':'teamId';const ownerVal=individual?u.id:t.id;const last=await one(`SELECT MAX(ordinal) as n FROM submissions WHERE ${ownerCol}=? AND experimentId=?`,ownerVal,exp.id);const ordinal=(last?.n||0)+1;need(ordinal<=3,'每个实验最多提交 3 次（补交计入这 3 次）',409);const mkd=makeup?(mk?.discount||0):0;const sid=id();const job=enqueue(u.id,'grade',{submissionId:sid,releaseId:r.id,revision:r.revision,experiment:exp,fileIds:b.fileIds,note:String(b.note||'').slice(0,20000),members:mem,discount:mkd},k.courseId,k.id,t?.id||null);await db.batch([job.statement,stmt('INSERT INTO submissions(id,classId,teamId,studentId,experimentId,releaseId,mode,ordinal,members,fileIds,note,makeup,jobId,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',sid,k.id,t?.id||null,individual?u.id:null,exp.id,r.id,'formal',ordinal,json(mem),json(b.fileIds),String(b.note||'').slice(0,20000),mkd,job.id,now())]);return reply({id:sid,makeup:!!makeup,discount:mkd});}
+   const ownerCol=individual?'studentId':'teamId';const ownerVal=individual?u.id:t.id;const last=await one(`SELECT MAX(ordinal) as n FROM submissions WHERE ${ownerCol}=? AND experimentId=? AND mode<>'scan'`,ownerVal,exp.id);const ordinal=(last?.n||0)+1;need(ordinal<=3,'每个实验最多提交 3 次（补交计入这 3 次）',409);const mkd=makeup?(mk?.discount||0):0;const sid=id();const job=enqueue(u.id,'grade',{submissionId:sid,releaseId:r.id,revision:r.revision,experiment:exp,fileIds:b.fileIds,note:String(b.note||'').slice(0,20000),members:mem,discount:mkd},k.courseId,k.id,t?.id||null);await db.batch([job.statement,stmt('INSERT INTO submissions(id,classId,teamId,studentId,experimentId,releaseId,mode,ordinal,members,fileIds,note,makeup,jobId,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',sid,k.id,t?.id||null,individual?u.id:null,exp.id,r.id,'formal',ordinal,json(mem),json(b.fileIds),String(b.note||'').slice(0,20000),mkd,job.id,now())]);return reply({id:sid,makeup:!!makeup,discount:mkd});}
   if(path==='appeal'&&method==='POST'){const b:any=await req.json();const s=await one('SELECT * FROM submissions WHERE id=?',b.submissionId);need(s,'提交不存在',404);if(s.teamId)await team(s.teamId,u);else need(s.studentId===u.id);const g=await one('SELECT * FROM grades WHERE submissionId=?',s.id);need(g&&(g.published||s.mode==='practice'),'评分尚未发布',400);await run('INSERT INTO appeals(id,submissionId,userId,content,created) VALUES(?,?,?,?,?)',id(),s.id,u.id,text(b.content),now());return reply({ok:true});}
   if(path==='grade-retry'&&method==='POST'){const b:any=await req.json();const s0=await one('SELECT * FROM submissions WHERE id=?',b.submissionId);need(s0,'提交不存在',404);const k0=await one('SELECT * FROM classes WHERE id=?',s0.classId);need(k0.owner===u.id||u.role==='admin','只有课堂教师可以重新评估',403);need(!await one("SELECT 1 FROM jobs WHERE id=? AND status IN ('queued','running')",s0.jobId),'该提交正在评分中，请等待完成',409);
    const c0=await one('SELECT * FROM courses WHERE id=?',k0.courseId);const r0=await one('SELECT * FROM releases WHERE id=?',c0?.publishedId||s0.releaseId)||await one('SELECT * FROM releases WHERE id=?',s0.releaseId);need(r0,'课程版本不存在',404);const exp0=parse(r0.content).experiments.find((e:any)=>e.id===s0.experimentId);need(exp0,'实验不存在',400);
