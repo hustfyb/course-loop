@@ -605,13 +605,19 @@ export default function Workbench() {
   const managedCourses = (s.courses || []).filter((c: Any) => c.managed);
   const cls = s.classes?.find((c: Any) => c.id === s.selected);
   // 课堂所属课程：来自当前课堂（教师日常教学视角）
+  const classCourseOwned: Any = cls
+    ? managedCourses.find((c: Any) => c.id === cls.courseId) || null
+    : null;
   const classCourse: Any = cls
     ? {
         id: cls.courseId,
         title: cls.courseTitle,
         term: cls.term,
-        revision: undefined,
-        managed: managedCourses.some((c: Any) => c.id === cls.courseId),
+        // revision 必须取真实草案版本：曾经硬编码 undefined，导致"从未发布过"的课程
+        // 与 s.release.revision(undefined) 相等，发布按钮对教师永久置灰（issue #2）
+        revision: classCourseOwned?.revision,
+        publishedId: classCourseOwned?.publishedId ?? null,
+        managed: !!classCourseOwned,
       }
     : null;
   // 编排课程：studio/overview 里选中并管理的课程
@@ -633,7 +639,7 @@ export default function Workbench() {
   // 管理实验内容（发布/编排/素材）只看课程负责人；补交设置课堂老师也可
   const canManageCourse = admin
     ? !!course
-    : teacher && !!cls && !!classCourse && cls.courseId === classCourse.id;
+    : teacher && !!classCourse && classCourse.managed === true;
   const canManageMakeup = admin || (teacher && !!cls && !!classCourse);
   const canManageCurrent = canManageCourse;
   // 课堂级补交：本课堂优先，否则沿用主课堂（与截止时间继承一致）
@@ -729,6 +735,10 @@ export default function Workbench() {
       })),
     ),
   ];
+  // 发布弹窗里要展示的实验列表：已发布课看当前发布内容，未发布看课程工作台草案
+  const publishExps: Any[] =
+    (s.release ? draft.experiments : studioDraft.experiments || draft.experiments) ||
+    [];
   const expPicks: Any[] = reportExps
     .filter((e: Any) => e.grading !== 'none')
     .map((e: Any) => ({
@@ -2163,7 +2173,9 @@ export default function Workbench() {
                         disabled={
                           busy ||
                           !course ||
-                          course.revision === s.release?.revision
+                          (!!s.release &&
+                            !!course.revision &&
+                            course.revision === s.release.revision)
                         }
                         onClick={() => open('publish')}
                       >
@@ -2245,6 +2257,12 @@ export default function Workbench() {
                     >
                       {canManageCurrent && (
                         <div className="button-row">
+                          <Button
+                            variant="outline"
+                            onClick={() => go('studio')}
+                          >
+                            到课程工作台看草案
+                          </Button>
                           {draftIssues.length ? (
                             <Button
                               variant="outline"
@@ -4543,7 +4561,13 @@ export default function Workbench() {
                 <strong>{draft.title}</strong> · v{course?.revision}
               </p>
               <ul className="publish-list">
-                {draft.experiments.map((e: Any) => (
+                {!s.release && (
+                  <p className="muted">
+                    这门课程还没有发布过：发布的是「课程工作台」里的最新草案（v
+                    {course?.revision ?? '?'}）。
+                  </p>
+                )}
+                {publishExps.map((e: Any) => (
                   <li key={e.id}>
                     <Check size={15} />
                     {e.title}
