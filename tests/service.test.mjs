@@ -96,7 +96,7 @@ test('capacity, unregistered invitation visibility, cancellation and unresolved 
  const j=(await req(x,'chat',{courseId:cid,message:'改任务'},a.cookie)).data.jobId;assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,409);
  assert.equal((await req(x,'job-action',{id:j,action:'cancel'},t.cookie)).status,403);await req(x,'job-action',{id:j,action:'cancel'},a.cookie);
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses').get().draft);d.questions=['MCP 是否必做？'];x.sqlite.prepare('UPDATE courses SET draft=?').run(JSON.stringify(d));assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,400);});
-test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,9);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
+test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,10);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
  const t=Date.now();sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u1','t@x.com','教师','','teacher',t);sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u2','s@x.com','学生','001','student',t);
  sqlite.prepare("INSERT INTO courses(id,owner,title,term,draft,joinCode,maxSize,deadline,maxFormal,autoPublish,created) VALUES('c1','u1','课','学期','{}','CODE123456',5,NULL,3,1,?)").run(t);
  sqlite.prepare("INSERT INTO enrollments VALUES('c1','u2')").run();sqlite.prepare("INSERT INTO teams VALUES('tm1','c1','u2','组',0,?)").run(t);sqlite.prepare("INSERT INTO members VALUES('c1','tm1','u2',1)").run();sqlite.prepare("INSERT INTO invites VALUES('iv1','tm1','n@x.com','pending',?)").run(t);
@@ -734,4 +734,38 @@ test('评分任务不带 reportRubric：避免模型输出两套 rubric 导致 i
  assert.equal((await req(x,'grade-retry',{submissionId:job.payload.submissionId},t.cookie)).status,200);
  const retry=x.sqlite.prepare("SELECT payload FROM jobs WHERE kind='grade' ORDER BY created DESC LIMIT 1").get();
  assert.equal(JSON.parse(retry.payload).experiment.reportRubric,undefined,'重评 payload 也不带 reportRubric');
+});
+
+test('网页分与报告分分开评分：各 100 分、各自任务与成绩表、名单两列',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);
+ d.experiments[0].rubric=[{id:'r1',title:'网页结构',max:40,criteria:'c'},{id:'r2',title:'网页内容',max:60,criteria:'c'}];
+ d.experiments[0].reportRubric=[{id:'g1',title:'报告结构',max:30,criteria:'c'},{id:'g2',title:'报告分析',max:70,criteria:'c'}];
+ x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'split@example.com');await req(x,'join',{code},s1.cookie);
+ const tid=(await req(x,'teams',{classId:kid,name:'分开评分组'},s1.cookie)).data.id;
+ const web=new FormData();web.set('classId',kid);web.set('teamId',tid);web.set('file',new File(['site'],'site.zip'));
+ const rep=new FormData();rep.set('classId',kid);rep.set('teamId',tid);rep.set('file',new File(['report'],'report.md'));
+ const wid=(await req(x,'upload',web,s1.cookie)).data.id,rid=(await req(x,'upload',rep,s1.cookie)).data.id;
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[wid,rid]},s1.cookie)).status,200);
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const jw=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const jr=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ assert.equal(jw.payload.part,'web');assert.deepEqual(jw.payload.experiment.rubric.map((r)=>r.id),['r1','r2']);assert.equal(jw.payload.experiment.reportRubric,undefined);
+ assert.equal(jr.payload.part,'report');assert.deepEqual(jr.payload.experiment.rubric.map((r)=>r.id),['g1','g2']);
+ assert.deepEqual(jr.payload.fileIds,[rid],'报告任务只喂报告文档，不读网页源码');
+ const mk=(job,score)=>({items:job.payload.experiment.rubric.map((r)=>({id:r.id,score:Math.round(r.max*score),reason:'符合',evidence:['x.md:1']})),suggestions:[],baseline:false});
+ const fw=await req(x,'connector/finish/'+jw.id,{result:mk(jw,1)},'',{...headers,'x-job-lease':jw.lease});assert.equal(fw.status,200,JSON.stringify(fw.data));
+ const fr=await req(x,'connector/finish/'+jr.id,{result:mk(jr,0.8)},'',{...headers,'x-job-lease':jr.lease});assert.equal(fr.status,200,JSON.stringify(fr.data));
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM grades').get().n,1,'网页分表 1 条');
+ assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM report_grades').get().n,1,'报告分表 1 条');
+ assert.equal(JSON.parse(x.sqlite.prepare('SELECT report FROM report_grades').get().report).total,80,'报告分独立 100 制');
+ const st=(await req(x,'state',undefined,t.cookie)).data;const sub=st.submissions.find((v)=>v.id===jw.payload.submissionId);
+ assert.equal(sub.report.total,100);assert.equal(sub.reportScore.total,80);
+ // 报告分可单独重评
+ assert.equal((await req(x,'grade-retry',{submissionId:sub.id,part:'report'},t.cookie)).status,200);
+ const rr=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;assert.equal(rr.payload.part,'report');
+ // 名单导出两列
+ const csv=Buffer.from(await (await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:t.cookie}}),x.env)).arrayBuffer()).toString('utf8');
+ assert.match(csv,/测试实验1 最高分/);assert.match(csv,/测试实验1 报告最高分/);
 });

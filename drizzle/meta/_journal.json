@@ -64,6 +64,13 @@
       "when": 1792684800000,
       "tag": "0008_makeup_per_class",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794500000000,
+      "tag": "0009_report_grades",
+      "breakpoints": true
     }
   ]
 }

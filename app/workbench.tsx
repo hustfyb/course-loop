@@ -804,6 +804,10 @@ export default function Workbench() {
         {sub.teamName || sub.members[0]?.name} · 第 {sub.ordinal} 次
         {sub.mode === 'scan' ? '巡检（GitHub 项目检查，教师触发）' : '提交'} ·{' '}
         {fmt(sub.created)}
+        {sub.reportScore ? ` · 报告分 ${sub.reportScore.total}` : ''}
+        {!sub.reportScore && sub.reportStatus === 'failed'
+          ? ' · 报告评分失败'
+          : ''}
         {sub.makeup > 0 ? ` · 补交（扣 ${sub.makeup}%）` : ''} · 快照成员：
         {sub.members.map((m: Any) => m.name).join('、')}
       </p>
@@ -2959,6 +2963,9 @@ export default function Workbench() {
                                 : '提交次数'}
                             </TableHead>
                             <TableHead>最高分</TableHead>
+                            {!!activeExpDetail?.reportRubric?.length && (
+                              <TableHead>报告分</TableHead>
+                            )}
                             <TableHead>状态</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -2968,6 +2975,14 @@ export default function Workbench() {
                               .filter((x: Any) => x.report)
                               .sort((a: Any, b: Any) => {
                                 const d = (b.report.total || 0) - (a.report.total || 0);
+                                return d !== 0 ? d : b.ordinal - a.ordinal;
+                              })[0];
+                            const bestReport = u.subs
+                              .filter((x: Any) => x.reportScore)
+                              .sort((a: Any, b: Any) => {
+                                const d =
+                                  (b.reportScore.total || 0) -
+                                  (a.reportScore.total || 0);
                                 return d !== 0 ? d : b.ordinal - a.ordinal;
                               })[0];
                             const stat =
@@ -2996,6 +3011,17 @@ export default function Workbench() {
                                       '—'
                                     )}
                                   </TableCell>
+                                  {!!activeExpDetail?.reportRubric?.length && (
+                                    <TableCell>
+                                      {bestReport ? (
+                                        <strong>
+                                          {bestReport.reportScore.total}
+                                        </strong>
+                                      ) : (
+                                        '—'
+                                      )}
+                                    </TableCell>
+                                  )}
                                   <TableCell>
                                     {stat === 'none' ? (
                                       <span className="tag">未提交</span>
@@ -3012,7 +3038,13 @@ export default function Workbench() {
                                 </TableRow>
                                 {u.subs.length > 0 && (
                                   <TableRow className="sub-detail-row">
-                                    <TableCell colSpan={4}>
+                                    <TableCell
+                                      colSpan={
+                                        activeExpDetail?.reportRubric?.length
+                                          ? 5
+                                          : 4
+                                      }
+                                    >
                                       <div className="sub-detail sub-detail-fixed">
                                         {u.subs.map((sub: Any) => (
                                           <Fragment key={sub.id}>

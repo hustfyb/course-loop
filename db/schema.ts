@@ -21,3 +21,5 @@ export const appeals=sqliteTable('appeals',{id:text().primaryKey(),submissionId:
 export const assist=sqliteTable('assist',{id:text().primaryKey(),userId:text().notNull().references(()=>users.id),role:text().notNull(),content:text().notNull(),created:integer().notNull()},t=>[index('assist_user').on(t.userId,t.created)]);
 export const feedback=sqliteTable('feedback',{id:text().primaryKey(),userId:text().notNull().references(()=>users.id),content:text().notNull(),status:text().notNull().default('open'),created:integer().notNull()});
 export const audit=sqliteTable('audit',{id:text().primaryKey(),actor:text().notNull(),action:text().notNull(),target:text().notNull(),detail:text().notNull(),created:integer().notNull()});
+// 实验报告分：与网页分（grades 表）分开评分，各 100 分
+export const reportGrades=sqliteTable('report_grades',{submissionId:text().primaryKey().references(()=>submissions.id),report:text().notNull(),published:integer().notNull().default(0),updated:integer().notNull()});
