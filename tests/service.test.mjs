@@ -712,3 +712,26 @@ test('课堂改绑与删除：空课堂可换课/可删，非本人课程与已�
  assert.equal(x.sqlite.prepare('SELECT COUNT(*) n FROM classes WHERE id=?').get(k2.id).n,0);
  assert.equal(x.sqlite.prepare("SELECT COUNT(*) n FROM audit WHERE action='class.delete'").get().n,1);
  assert.equal((await req(x,'class-delete',{classId:k2.id},t.cookie)).status,404);});
+test('评分任务不带 reportRubric：避免模型输出两套 rubric 导致 items 数量校验失败',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ // 草案里同时有主 rubric（5 项）和报告专用 reportRubric（5 项），这是新生实践 e1 的真实形态
+ const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses WHERE id=?').get(cid).draft);
+ d.experiments[0].reportRubric=[{id:'g1',title:'报告结构',max:20,criteria:'c'},{id:'g2',title:'报告内容',max:80,criteria:'c'}];
+ x.sqlite.prepare('UPDATE courses SET draft=? WHERE id=?').run(JSON.stringify(d),cid);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'gstudent@example.com');await req(x,'join',{code},s1.cookie);
+ const tid=(await req(x,'teams',{classId:kid,name:'评分组'},s1.cookie)).data.id;
+ const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['work'],'work.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid]},s1.cookie)).status,200);
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const job=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ assert.equal(job.kind,'grade');
+ assert.equal(job.payload.experiment.reportRubric,undefined,'主评分任务的 payload 不应带 reportRubric');
+ assert.equal(job.payload.experiment.rubric.length,2);
+ const result={items:job.payload.experiment.rubric.map((r)=>({id:r.id,score:r.max,reason:'符合要求',evidence:['work.md:1']})),suggestions:[],baseline:false};
+ const done=await req(x,'connector/finish/'+job.id,{result},'',{...headers,'x-job-lease':job.lease});
+ assert.equal(done.status,200,JSON.stringify(done.data));
+ // 重评同样不能把 reportRubric 带回去
+ assert.equal((await req(x,'grade-retry',{submissionId:job.payload.submissionId},t.cookie)).status,200);
+ const retry=x.sqlite.prepare("SELECT payload FROM jobs WHERE kind='grade' ORDER BY created DESC LIMIT 1").get();
+ assert.equal(JSON.parse(retry.payload).experiment.reportRubric,undefined,'重评 payload 也不带 reportRubric');
+});
