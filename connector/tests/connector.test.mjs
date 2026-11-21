@@ -178,3 +178,17 @@ test('runner：提取失败（压缩包超限）不炸任务，提示模型按�
   assert.ok(site.received.finishes[0].body.result,'提取失败也应正常回传评分结果');
  }finally{await site.close();await cleanup(dir)}
 });
+
+test('promptFor：grade 的 web/report 都必须用评分契约，不能被 fallback 的 feedback 契约顶掉',async()=>{
+ const {promptFor}=await import('../runner.mjs');
+ const exp={id:'e1',title:'网页大实验',rubric:[{id:'r1',title:'页面',max:40,criteria:'c'}],reportRubric:[{id:'g1',title:'报告',max:100,criteria:'c'}]};
+ const base={kind:'grade',payload:{experiment:exp,members:[],fileIds:[]}};
+ const web=promptFor({...base,payload:{...base.payload,part:'web'}},[]);
+ assert.match(web,/items 必须与 rubric 逐项对应/,'web 任务必须是评分契约');
+ assert.ok(!/结果契约：返回 \{"feedback"/.test(web),'web 任务不能落到 feedback 契约');
+ assert.ok(!/实验报告专项评分/.test(web),'web 任务不带报告专项说明');
+ const rep=promptFor({...base,payload:{...base.payload,part:'report'}},[]);
+ assert.match(rep,/items 必须与 rubric 逐项对应/);
+ assert.match(rep,/实验报告专项评分/,'report 任务带报告专项说明');
+ assert.match(rep,/不要把其它评分表并进 items/);
+});
