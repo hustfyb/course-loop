@@ -798,3 +798,18 @@ test('网页作业：提交时记录网站地址（可从说明里抽）并带�
  const retryJob=x.sqlite.prepare("SELECT payload FROM jobs WHERE kind='grade' ORDER BY created DESC LIMIT 1").get();
  assert.equal(JSON.parse(retryJob.payload).siteUrl,'https://team-a.github.io/site/');
 });
+test('网站不可用的网页分：全 0 + baseline=false，平台不得保底到 60',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'dead@example.com');await req(x,'join',{code},s1.cookie);
+ const tid=(await req(x,'teams',{classId:kid,name:'死站组'},s1.cookie)).data.id;
+ const f=new FormData();f.set('classId',kid);f.set('teamId',tid);f.set('file',new File(['x'],'r.md'));const fid=(await req(x,'upload',f,s1.cookie)).data.id;
+ assert.equal((await req(x,'submit',{experimentId:'exp-1',fileIds:[fid],siteUrl:'https://nobody.github.io/nothing/'},s1.cookie)).status,200);
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const job=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ const res={items:job.payload.experiment.rubric.map((r)=>({id:r.id,score:0,reason:'网站无法访问：主页返回 HTTP 404；按规则本次网页分不计分',evidence:['SITE.md：主页返回 HTTP 404']})),baseline:false,suggestions:['先确认 Pages 已发布'],needsReview:true,limitations:['网站无法访问：主页返回 HTTP 404']};
+ assert.equal((await req(x,'connector/finish/'+job.id,{result:res},'',{...headers,'x-job-lease':job.lease})).status,200);
+ const g=JSON.parse(x.sqlite.prepare('SELECT report FROM grades WHERE submissionId=?').get(job.payload.submissionId).report);
+ assert.equal(g.total,0,'全 0 + baseline=false 不应被保底成 60');
+ assert.equal(g.baseline,false);
+ assert.match(g.limitations[0],/网站无法访问/);
+});

@@ -172,11 +172,17 @@ export async function crawlSite(siteUrl, opts = {}) {
   }
 
   const okPages = detail.filter((p) => p.status >= 200 && p.status < 400);
+  const homeOk = home.status >= 200 && home.status < 400;
+  const siteOk = homeOk && okPages.length > 0;
+  const siteReason = homeOk
+    ? (okPages.length ? '' : '主页可访问但抓不到任何页面内容')
+    : (home.error ? '主页连接失败（' + home.error + '）' : '主页返回 HTTP ' + home.status);
   const titles = detail.filter((p) => p.title).map((p) => p.title);
   const lines = [];
   lines.push(`# 网站实评快照：${base.href}`);
   if (conv.note) lines.push('地址说明：' + conv.note);
   lines.push(`抓取时间：${new Date(t0).toISOString().slice(0, 16).replace('T', ' ')}（同源抓取，最多 ${maxPages} 页 / ${maxAssets} 个资源）`);
+  lines.push('站点可用性：' + (siteOk ? '可用' : '不可用（' + siteReason + '）'));
   lines.push(`主页状态：${home.status || '连接失败'}${home.error ? '（' + home.error + '）' : ''}；可访问页面：${okPages.length}/${detail.length}`);
   if (titles.length) lines.push(`站点标题：${titles.join(' | ').slice(0, 300)}`);
   lines.push('');
@@ -201,7 +207,8 @@ export async function crawlSite(siteUrl, opts = {}) {
   }
   lines.push('');
   lines.push('## 判定提示');
-  lines.push(`- 主页能否打开：${home.status >= 200 && home.status < 400 ? '能' : '不能'}`);
+  lines.push(`- 主页能否打开：${homeOk ? '能' : '不能'}`);
+  if (!siteOk) lines.push('- **站点不可用，网页分应为 0**：' + siteReason);
   lines.push(`- 从主页可达的页数：${okPages.length}（含主页）`);
   lines.push(`- 页面里绝对路径引用（应为 0）：${detail.reduce((n, p) => n + (p.absoluteInternal || []).length, 0)} 处`);
   lines.push('- 以上均为实际抓取证据；抓不到的页面/资源不得假定为可用。');

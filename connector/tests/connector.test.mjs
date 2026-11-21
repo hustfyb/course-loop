@@ -247,3 +247,16 @@ test('crawlSite：学生给 GitHub 仓库地址时按 Pages 规则换算',async(
  const out2=await crawlSite('https://github.com/HDsix-coder/chenjunnan.github.io/',{maxPages:1,maxAssets:0,timeout:5000,budgetMs:8000});
  assert.match(out2,/https:\/\/hdsix-coder\.github\.io\//,'<user>.github.io 仓库应换算为站点根');
 });
+
+test('网站不可用：网页分一律 0 且写明原因（不走保底映射）',async()=>{
+ const {offlineSiteResult}=await import('../runner.mjs');
+ const exp={id:'e1',rubric:[{id:'r1',title:'页面数量',max:20,criteria:'c'},{id:'r2',title:'可达性',max:25,criteria:'c'}]};
+ const r=offlineSiteResult(exp,'主页返回 HTTP 404');
+ assert.equal(r.items.length,2);
+ assert.ok(r.items.every((i)=>i.score===0),'所有评分项必须 0 分');
+ assert.equal(r.baseline,false,'baseline=false 才会被平台映射成 0 分');
+ assert.equal(r.needsReview,true);
+ assert.match(r.items[0].reason,/网站无法访问：主页返回 HTTP 404/);
+ assert.match(r.items[0].reason,/重新提交/);
+ assert.deepEqual(r.limitations,['网站无法访问：主页返回 HTTP 404']);
+});
