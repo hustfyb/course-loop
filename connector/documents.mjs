@@ -55,6 +55,10 @@ export function zipRawNames(bytes){
 function normalizeEntryName(name){
  return String(name).replace(/\\/g,'/').replaceAll('\u0000','').replace(/^\.\//,'');
 }
+// 打包噪声：macOS 资源叉、Windows 缩略图、版本库目录，对评分无用且会干扰模型
+function isNoiseEntry(name){
+ return name.startsWith('__MACOSX/')||name.endsWith('/.DS_Store')||name==='.DS_Store'||name.endsWith('/Thumbs.db')||name==='Thumbs.db'||name.split('/').includes('.git');
+}
 function isUnsafeEntry(name){
  if(!name||name.startsWith('/'))return true;
  if(/^[a-zA-Z]:/.test(name))return true;
@@ -109,7 +113,7 @@ export async function extractDocument(filename,bytes,root){
   const nested=[];
   for(let i=0;i<keys.length;i++){
    const name=names[i];
-   if(!name||name.endsWith('/'))continue;
+   if(!name||name.endsWith('/')||isNoiseEntry(name))continue;
    const target=path.resolve(out,name);
    if(!target.startsWith(out+path.sep))throw Error('压缩包路径越界：'+name);
    await fs.mkdir(path.dirname(target),{recursive:true});
@@ -126,7 +130,7 @@ export async function extractDocument(filename,bytes,root){
     else if(sub.mode==='inline')notes.push(`${item.name} → ${sub.text}`);
    }catch(e){notes.push(`${item.name} → 提取失败：${String(e?.message||e).slice(0,200)}`);}
   }
-  return {mode:'inline',text:`作业已解压到 ${out}，共 ${written.length} 个文件：\n`+written.join('\n')+(notes.length?'\n\n内嵌文档的提取结果：\n'+notes.join('\n'):'')};
+  return {mode:'inline',text:`作业已解压到 ${out}，共 ${written.length} 个文件（已剔除 __MACOSX/.DS_Store 等噪声）：\n`+written.join('\n')+(written.length?'\n\n请用 read 工具逐个读取上面的文件（尤其是 .html/.css/.js/.md/.txt 与代码文件）后再评分；未读取的内容不得作为评分依据。':'')+(notes.length?'\n\n内嵌文档的提取结果：\n'+notes.join('\n'):'')};
  }
  if(PLAIN_TEXT_EXTENSIONS.has(ext))return {mode:'raw'};
  if(ext==='.doc')return {mode:'raw',note:'旧版 .doc 二进制格式无法提取文本，请让教师/学生另存为 .docx、PDF 或 Markdown 后再评。'};

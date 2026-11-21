@@ -192,3 +192,22 @@ test('promptFor：grade 的 web/report 都必须用评分契约，不能被 fall
  assert.match(rep,/实验报告专项评分/,'report 任务带报告专项说明');
  assert.match(rep,/不要把其它评分表并进 items/);
 });
+
+test('ZIP 解压：剔除 __MACOSX/.DS_Store 噪声，并提示模型用 read 逐个查看',async()=>{
+ const dir=await tempDir();
+ try{
+  const bytes=storedZip([
+   {nameBytes:Buffer.from('site/index.html'),data:Buffer.from('<h1>home</h1>')},
+   {nameBytes:Buffer.from('__MACOSX/._index.html'),data:Buffer.from('mac')},
+   {nameBytes:Buffer.from('site/.DS_Store'),data:Buffer.from('ds')},
+   {nameBytes:Buffer.from('.git/config'),data:Buffer.from('[core]')},
+  ]);
+  const r=await extractDocument('site.zip',bytes,dir);
+  assert.equal(r.mode,'inline');
+  assert.match(r.text,/请用 read 工具逐个读取/,'必须提示 read，否则模型可能只看清单');
+  assert.match(r.text,/site\/index\.html/);
+  assert.ok(!/__MACOSX\/._index\.html/.test(r.text)&&!/site\/\.DS_Store/.test(r.text)&&!/\.git\/config/.test(r.text),'噪声文件不应出现在清单里');
+  assert.ok(await fs.stat(path.join(dir,'extracted/site/index.html')));
+  await assert.rejects(()=>fs.stat(path.join(dir,'extracted/__MACOSX/._index.html')));
+ }finally{await cleanup(dir)}
+});
