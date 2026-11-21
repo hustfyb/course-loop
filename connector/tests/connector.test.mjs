@@ -238,3 +238,12 @@ test('crawlSite：抓主页+站内页，统计可达页数与 404 资源，抓�
  const bad=await crawlSite('not a url');
  assert.match(bad,/抓取失败/);
 });
+
+test('crawlSite：学生给 GitHub 仓库地址时按 Pages 规则换算',async()=>{
+ const {crawlSite}=await import('../site.mjs');
+ const out=await crawlSite('https://github.com/devjing-hub/dengzixian',{maxPages:1,maxAssets:0,timeout:5000,budgetMs:8000});
+ assert.match(out,/已换算为 GitHub Pages 站点 https:\/\/devjing-hub\.github\.io\/dengzixian\//);
+ assert.match(out,/^# 网站实评快照：https:\/\/devjing-hub\.github\.io/m);
+ const out2=await crawlSite('https://github.com/HDsix-coder/chenjunnan.github.io/',{maxPages:1,maxAssets:0,timeout:5000,budgetMs:8000});
+ assert.match(out2,/https:\/\/hdsix-coder\.github\.io\//,'<user>.github.io 仓库应换算为站点根');
+});

@@ -53,6 +53,23 @@ async function get(url, method = 'GET', timeout) {
   return { status: r.status, ct, body, finalUrl: r.url || url };
 }
 
+// 学生常把 GitHub 仓库地址当网站地址交上来：按 GitHub Pages 规则换算成真实站点地址
+function toPagesUrl(u) {
+  try {
+    const x = new URL(u);
+    if (x.hostname !== 'github.com') return { url: u, note: '' };
+    const seg = x.pathname.split('/').filter(Boolean);
+    if (seg.length < 2) return { url: u, note: '' };
+    const owner = seg[0].toLowerCase();
+    const repo = seg[1];
+    if (/[.]github[.]io$/i.test(repo)) return { url: 'https://' + owner + '.github.io/', note: '学生给的是仓库地址，已换算为 GitHub Pages 站点 ' + 'https://' + owner + '.github.io/' };
+    const pages = 'https://' + owner + '.github.io/' + repo + '/';
+    return { url: pages, note: '学生给的是仓库地址，已换算为 GitHub Pages 站点 ' + pages };
+  } catch {
+    return { url: u, note: '' };
+  }
+}
+
 export async function crawlSite(siteUrl, opts = {}) {
   const maxPages = opts.maxPages ?? 8;
   const maxAssets = opts.maxAssets ?? 40;
@@ -61,9 +78,11 @@ export async function crawlSite(siteUrl, opts = {}) {
   const t0 = Date.now();
   const left = () => budgetMs - (Date.now() - t0);
 
+  const conv = toPagesUrl(siteUrl);
+  const target = conv.url;
   let base;
   try {
-    base = new URL(siteUrl);
+    base = new URL(target);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') throw new Error('only http(s)');
   } catch {
     return `# 网站实评快照：抓取失败\n地址无效：${siteUrl}\n结论：无法访问该地址，网页相关评分只能按报告等其它材料进行，needsReview 应为 true。`;
@@ -156,6 +175,7 @@ export async function crawlSite(siteUrl, opts = {}) {
   const titles = detail.filter((p) => p.title).map((p) => p.title);
   const lines = [];
   lines.push(`# 网站实评快照：${base.href}`);
+  if (conv.note) lines.push('地址说明：' + conv.note);
   lines.push(`抓取时间：${new Date(t0).toISOString().slice(0, 16).replace('T', ' ')}（同源抓取，最多 ${maxPages} 页 / ${maxAssets} 个资源）`);
   lines.push(`主页状态：${home.status || '连接失败'}${home.error ? '（' + home.error + '）' : ''}；可访问页面：${okPages.length}/${detail.length}`);
   if (titles.length) lines.push(`站点标题：${titles.join(' | ').slice(0, 300)}`);
