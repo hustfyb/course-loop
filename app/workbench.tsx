@@ -528,6 +528,8 @@ export default function Workbench() {
   const [attachments, setAttachments] = useState<Any[]>([]);
   // 教师手工补交：代交文件单独存放，避免与学生自助提交的附件混用
   const [makeupFiles, setMakeupFiles] = useState<Any[]>([]);
+  // 网页作业：学生填写的网站地址（网页分据此实抓评分）
+  const [siteUrl, setSiteUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -804,6 +806,14 @@ export default function Workbench() {
         {sub.teamName || sub.members[0]?.name} · 第 {sub.ordinal} 次
         {sub.mode === 'scan' ? '巡检（GitHub 项目检查，教师触发）' : '提交'} ·{' '}
         {fmt(sub.created)}
+        {sub.siteUrl ? (
+          <>
+            {' · 网站：'}
+            <a href={sub.siteUrl} target="_blank" rel="noreferrer">
+              {sub.siteUrl}
+            </a>
+          </>
+        ) : null}
         {sub.reportScore ? ` · 报告分 ${sub.reportScore.total}` : ''}
         {!sub.reportScore && sub.reportStatus === 'failed'
           ? ' · 报告评分失败'
@@ -968,6 +978,7 @@ export default function Workbench() {
       await call(path, data);
       setNotice(success);
       setModal(null);
+      setSiteUrl('');
     });
   }
   async function ensureCourse() {
@@ -2431,6 +2442,11 @@ export default function Workbench() {
                                   </span>
                                 ))}
                               </div>
+                              <Input
+                                placeholder="网站地址（如 https://你的名字.github.io/项目/，网页作业按此实抓评分）"
+                                value={siteUrl}
+                                onChange={(e) => setSiteUrl(e.target.value)}
+                              />
                               <textarea
                                 className="text-area"
                                 placeholder="说明分工、运行方式及需要核验的内容"
@@ -4674,6 +4690,7 @@ export default function Workbench() {
                       experimentId: detail.id,
                       fileIds: attachments.map((f) => f.id),
                       note: message,
+                      siteUrl,
                     },
                     '提交成功！小课正在评分，状态见下方列表。',
                   )

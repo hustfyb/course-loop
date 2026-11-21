@@ -71,6 +71,13 @@
       "when": 1794500000000,
       "tag": "0009_report_grades",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794600000000,
+      "tag": "0010_submission_site_url",
+      "breakpoints": true
     }
   ]
 }

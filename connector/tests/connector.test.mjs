@@ -191,6 +191,9 @@ test('promptFor：grade 的 web/report 都必须用评分契约，不能被 fall
  assert.match(rep,/items 必须与 rubric 逐项对应/);
  assert.match(rep,/实验报告专项评分/,'report 任务带报告专项说明');
  assert.match(rep,/不要把其它评分表并进 items/);
+ const webSite=promptFor({...base,payload:{...base.payload,part:'web',siteUrl:'https://x.github.io/a/'}},[]);
+ assert.match(webSite,/SITE\.md/,'网页任务要指明以抓取快照为主要依据');
+ assert.match(webSite,/实际抓取/);
 });
 
 test('ZIP 解压：剔除 __MACOSX/.DS_Store 噪声，并提示模型用 read 逐个查看',async()=>{
@@ -210,4 +213,28 @@ test('ZIP 解压：剔除 __MACOSX/.DS_Store 噪声，并提示模型用 read �
   assert.ok(await fs.stat(path.join(dir,'extracted/site/index.html')));
   await assert.rejects(()=>fs.stat(path.join(dir,'extracted/__MACOSX/._index.html')));
  }finally{await cleanup(dir)}
+});
+
+test('crawlSite：抓主页+站内页，统计可达页数与 404 资源，抓不到不抛错',async()=>{
+ const {crawlSite}=await import('../site.mjs');
+ const http=await import('node:http');
+ const server=http.createServer((req,res)=>{
+  if(req.url==='/site/'||req.url==='/site/index.html'){res.writeHead(200,{'content-type':'text/html'});return res.end('<title>首页</title><a href="/site/a.html">A</a><a href="/site/b.html">B</a><img src="/site/good.png"><img src="/site/missing.png"><p>hello homepage</p>');}
+  if(req.url==='/site/a.html'||req.url==='/site/b.html'){res.writeHead(200,{'content-type':'text/html'});return res.end('<title>分页</title><a href="/site/index.html">home</a><p>page body</p>');}
+  if(req.url==='/site/good.png'){res.writeHead(200,{'content-type':'image/png'});return res.end('png');}
+  res.writeHead(404);res.end('nope');
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const base='http://127.0.0.1:'+server.address().port;
+ try{
+  const out=await crawlSite(base+'/site/',{maxPages:6,maxAssets:10,timeout:4000,budgetMs:15000});
+  assert.match(out,/网站实评快照/);
+  assert.match(out,/首页/,'应抓到主页标题');
+  assert.ok((out.match(/^### /gm)||[]).length>=2,'应抓到多个页面');
+  assert.match(out,/missing\.png/,'应报告 404 资源');
+  assert.match(out,/从主页可达的页数/);
+ }finally{await new Promise(r=>server.close(r));}
+ // 地址无效时不抛错
+ const bad=await crawlSite('not a url');
+ assert.match(bad,/抓取失败/);
 });

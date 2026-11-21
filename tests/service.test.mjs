@@ -96,7 +96,7 @@ test('capacity, unregistered invitation visibility, cancellation and unresolved 
  const j=(await req(x,'chat',{courseId:cid,message:'改任务'},a.cookie)).data.jobId;assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,409);
  assert.equal((await req(x,'job-action',{id:j,action:'cancel'},t.cookie)).status,403);await req(x,'job-action',{id:j,action:'cancel'},a.cookie);
  const d=JSON.parse(x.sqlite.prepare('SELECT draft FROM courses').get().draft);d.questions=['MCP 是否必做？'];x.sqlite.prepare('UPDATE courses SET draft=?').run(JSON.stringify(d));assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,400);});
-test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,10);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
+test('migration 0001 preserves legacy course data in a default class',async()=>{const files=(await fs.readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.length,11);const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');sqlite.exec(await fs.readFile('drizzle/'+files[0],'utf8'));
  const t=Date.now();sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u1','t@x.com','教师','','teacher',t);sqlite.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('u2','s@x.com','学生','001','student',t);
  sqlite.prepare("INSERT INTO courses(id,owner,title,term,draft,joinCode,maxSize,deadline,maxFormal,autoPublish,created) VALUES('c1','u1','课','学期','{}','CODE123456',5,NULL,3,1,?)").run(t);
  sqlite.prepare("INSERT INTO enrollments VALUES('c1','u2')").run();sqlite.prepare("INSERT INTO teams VALUES('tm1','c1','u2','组',0,?)").run(t);sqlite.prepare("INSERT INTO members VALUES('c1','tm1','u2',1)").run();sqlite.prepare("INSERT INTO invites VALUES('iv1','tm1','n@x.com','pending',?)").run(t);
@@ -768,4 +768,33 @@ test('网页分与报告分分开评分：各 100 分、各自任务与成绩表
  // 名单导出两列
  const csv=Buffer.from(await (await api(new Request('http://localhost/api/class-roster?classId='+kid,{headers:{cookie:t.cookie}}),x.env)).arrayBuffer()).toString('utf8');
  assert.match(csv,/测试实验1 最高分/);assert.match(csv,/测试实验1 报告最高分/);
+});
+test('网页作业：提交时记录网站地址（可从说明里抽）并带进评分任务',async()=>{const x=await init();const {a,t,cid,kid,code}=await classroom(x);
+ assert.equal((await req(x,'publish',{courseId:cid,revision:1},a.cookie)).status,200);
+ const s1=await login(x,'site1@example.com'),s2=await login(x,'site2@example.com');
+ for(const p of [s1,s2])await req(x,'join',{code},p.cookie);
+ const t1=(await req(x,'teams',{classId:kid,name:'站点组A'},s1.cookie)).data.id;
+ const t2=(await req(x,'teams',{classId:kid,name:'站点组B'},s2.cookie)).data.id;
+ const up=async(cookie,team,name)=>{const f=new FormData();f.set('classId',kid);f.set('teamId',team);f.set('file',new File(['x'],name));return (await req(x,'upload',f,cookie)).data.id;};
+ const fa=await up(s1.cookie,t1,'report.md');
+ // 显式传 siteUrl
+ const r1=await req(x,'submit',{experimentId:'exp-1',fileIds:[fa],siteUrl:'https://team-a.github.io/site/'},s1.cookie);assert.equal(r1.status,200,JSON.stringify(r1.data));
+ const subA=x.sqlite.prepare('SELECT * FROM submissions WHERE teamId=?').get(t1);
+ assert.equal(subA.siteUrl,'https://team-a.github.io/site/');
+ const p=(await req(x,'pair',{},a.cookie)).data;const headers={authorization:'Bearer '+p.token};
+ const jobA=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ assert.equal(jobA.payload.siteUrl,'https://team-a.github.io/site/');
+ // 只在说明里给地址 → 自动抽取
+ const fb=await up(s2.cookie,t2,'report.md');
+ const r2=await req(x,'submit',{experimentId:'exp-1',fileIds:[fb],note:'我的网站：https://team-b.github.io/demo/ 报告见附件'},s2.cookie);assert.equal(r2.status,200,JSON.stringify(r2.data));
+ const subB=x.sqlite.prepare('SELECT * FROM submissions WHERE teamId=?').get(t2);
+ assert.equal(subB.siteUrl,'https://team-b.github.io/demo/');
+ const jobB=(await req(x,'connector/poll',{acp:true},'',headers)).data.job;
+ assert.equal(jobB.payload.siteUrl,'https://team-b.github.io/demo/');
+ // 重评带上 siteUrl（先把手上的任务跑完，避免"正在评分中"409）
+ const mk=(job)=>({items:job.payload.experiment.rubric.map((r)=>({id:r.id,score:Math.round(r.max*0.5),reason:'ok',evidence:['x.md:1']})),suggestions:[],baseline:false});
+ for(const j of [jobA,jobB])assert.equal((await req(x,'connector/finish/'+j.id,{result:mk(j)},'',{...headers,'x-job-lease':j.lease})).status,200);
+ assert.equal((await req(x,'grade-retry',{submissionId:subA.id,part:'web'},t.cookie)).status,200);
+ const retryJob=x.sqlite.prepare("SELECT payload FROM jobs WHERE kind='grade' ORDER BY created DESC LIMIT 1").get();
+ assert.equal(JSON.parse(retryJob.payload).siteUrl,'https://team-a.github.io/site/');
 });

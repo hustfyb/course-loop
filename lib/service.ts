@@ -113,6 +113,16 @@ const scoringExperiment=(e:any,part:string='web')=>{
  const {reportRubric:_ignored,...rest}=e;return rest;
 };
 const REPORT_FILE_RE=/[.](md|markdown|txt|pdf|docx|doc)$/i;
+// 网页作业的评分依据是学生提供的网站地址：规范化（补协议/去尾部斜杠）+ 从提交说明里兜底提取
+function normalizeSiteUrl(raw:any){
+ const t=String(raw||'').trim();if(!t)return '';
+ const withProto=/^https?:[\/][\/]/i.test(t)?t:('https://'+t);
+ try{const u=new URL(withProto);if(u.protocol!=='https:'&&u.protocol!=='http:')return '';return u.origin+u.pathname.replace(/[\/]+$/,'/');}catch{return '';}
+}
+function pickSiteUrl(text:any){
+ const m=String(text||'').match(/https?:[\/][\/][^\s"'<>]+/i);
+ return m?normalizeSiteUrl(m[0]):'';
+}
  const reportFileIds=async(fids:any[])=>{const out:string[]=[];for(const fid of fids||[]){const f=await one('SELECT name FROM files WHERE id=?',fid);if(f&&REPORT_FILE_RE.test(f.name))out.push(fid);}return out;};
  // GitHub 项目巡检（手工触发）：为指定课堂/实验下已填仓库的小组，各生成一条巡检记录与一条 repo-scan 任务。
  // 一次触发评估的是仓库的全部提交历史；正在评分中的小组会跳过，避免重复花钱。
@@ -360,8 +370,9 @@ const repoExp=exps.some((e:any)=>e.id===s.experimentId&&e.grading==='repo');if(t
    if(individual){for(const f of fs)need(f.owner===u.id,'文件不属于本人',403);mem=[{id:u.id,name:u.name,email:u.email}];}
    else{t=await one('SELECT teams.* FROM teams JOIN members ON teams.id=members.teamId WHERE members.userId=? AND members.classId=?',u.id,k.id);need(t,'请先加入本课堂的小组',400);need(t.leader===u.id,'由组长代表小组提交');for(const f of fs)need(f.teamId===t.id,'文件不属于本组',403);mem=await all('SELECT users.id,users.name,users.email FROM members JOIN users ON members.userId=users.id WHERE members.teamId=?',t.id);}
    const ownerCol=individual?'studentId':'teamId';const ownerVal=individual?u.id:t.id;const last=await one(`SELECT MAX(ordinal) as n FROM submissions WHERE ${ownerCol}=? AND experimentId=? AND mode<>'scan'`,ownerVal,exp.id);const ordinal=(last?.n||0)+1;need(ordinal<=3,'每个实验最多提交 3 次（补交计入这 3 次）',409);const mkd=makeup?(mk?.discount||0):0;const sid=id();const note=String(b.note||'').slice(0,20000);
-   const job=enqueue(u.id,'grade',{submissionId:sid,releaseId:r.id,revision:r.revision,part:'web',experiment:scoringExperiment(exp,'web'),fileIds:b.fileIds,note,members:mem,discount:mkd},k.courseId,k.id,t?.id||null);
-   const stmts=[job.statement,stmt('INSERT INTO submissions(id,classId,teamId,studentId,experimentId,releaseId,mode,ordinal,members,fileIds,note,makeup,jobId,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',sid,k.id,t?.id||null,individual?u.id:null,exp.id,r.id,'formal',ordinal,json(mem),json(b.fileIds),note,mkd,job.id,now())];
+   const siteUrl=normalizeSiteUrl(b.siteUrl)||pickSiteUrl(note);
+   const job=enqueue(u.id,'grade',{submissionId:sid,releaseId:r.id,revision:r.revision,part:'web',experiment:scoringExperiment(exp,'web'),fileIds:b.fileIds,note,members:mem,discount:mkd,siteUrl},k.courseId,k.id,t?.id||null);
+   const stmts=[job.statement,stmt('INSERT INTO submissions(id,classId,teamId,studentId,experimentId,releaseId,mode,ordinal,members,fileIds,note,makeup,siteUrl,jobId,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',sid,k.id,t?.id||null,individual?u.id:null,exp.id,r.id,'formal',ordinal,json(mem),json(b.fileIds),note,mkd,siteUrl,job.id,now())];
    if((exp.reportRubric||[]).length){
     const rids=fs.filter((f:any)=>REPORT_FILE_RE.test(f.name)).map((f:any)=>f.id);
     const rjob=enqueue(u.id,'grade',{submissionId:sid,releaseId:r.id,revision:r.revision,part:'report',experiment:scoringExperiment(exp,'report'),fileIds:rids,note:'[实验报告评分] 只依据提交的实验报告文档评分，不读取网页源码、不检查线上页面。',members:mem,discount:0},k.courseId,k.id,t?.id||null);
@@ -372,7 +383,7 @@ const repoExp=exps.some((e:any)=>e.id===s.experimentId&&e.grading==='repo');if(t
   if(path==='grade-retry'&&method==='POST'){const b:any=await req.json();const s0=await one('SELECT * FROM submissions WHERE id=?',b.submissionId);need(s0,'提交不存在',404);const k0=await one('SELECT * FROM classes WHERE id=?',s0.classId);need(k0.owner===u.id||u.role==='admin','只有课堂教师可以重新评估',403);need(!await one("SELECT 1 FROM jobs WHERE id=? AND status IN ('queued','running')",s0.jobId),'该提交正在评分中，请等待完成',409);
    const c0=await one('SELECT * FROM courses WHERE id=?',k0.courseId);const r0=await one('SELECT * FROM releases WHERE id=?',c0?.publishedId||s0.releaseId)||await one('SELECT * FROM releases WHERE id=?',s0.releaseId);need(r0,'课程版本不存在',404);const exp0=parse(r0.content).experiments.find((e:any)=>e.id===s0.experimentId);need(exp0,'实验不存在',400);
    const part=b.part==='report'?'report':'web';const fids=parse(s0.fileIds,[]);
-   const job=enqueue(u.id,'grade',{submissionId:s0.id,releaseId:r0.id,revision:r0.revision,part,experiment:scoringExperiment(exp0,part),fileIds:part==='report'?await reportFileIds(fids):fids,note:part==='report'?'[实验报告评分] 只依据提交的实验报告文档评分，不读取网页源码、不检查线上页面。':s0.note,members:parse(s0.members,[]),discount:part==='report'?0:(s0.makeup||0)},k0.courseId,s0.classId,s0.teamId);await db.batch([job.statement,stmt('UPDATE submissions SET jobId=? WHERE id=?',job.id,s0.id)]);
+   const job=enqueue(u.id,'grade',{submissionId:s0.id,releaseId:r0.id,revision:r0.revision,part,experiment:scoringExperiment(exp0,part),fileIds:part==='report'?await reportFileIds(fids):fids,note:part==='report'?'[实验报告评分] 只依据提交的实验报告文档评分，不读取网页源码、不检查线上页面。':s0.note,members:parse(s0.members,[]),discount:part==='report'?0:(s0.makeup||0),siteUrl:part==='report'?'':(normalizeSiteUrl(s0.siteUrl)||pickSiteUrl(s0.note))},k0.courseId,s0.classId,s0.teamId);await db.batch([job.statement,stmt('UPDATE submissions SET jobId=? WHERE id=?',job.id,s0.id)]);
    return reply({jobId:job.id});}
   // 一键重试：把本课堂所有评分失败的作业批量重新提交评分（教师/管理员）
   if(path==='grade-retry-all'&&method==='POST'){const b:any=await req.json();const k0=await one('SELECT * FROM classes WHERE id=?',b.classId);need(k0,'课堂不存在',404);need(k0.owner===u.id||u.role==='admin','只有课堂教师可以批量重评',403);
